@@ -1,0 +1,9 @@
+# Minimal essential packages (no conflicts)
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pandas
+numpy
+requests
+python-dotenv
+websocket-client
+ta

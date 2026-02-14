@@ -1,0 +1,12 @@
+{
+  "consensus_threshold": 0.7,
+  "position_size": 1,
+  "stop_loss_percent": 0.5,
+  "target_percent": 1.0,
+  "trading_hours": {
+    "start": "09:15",
+    "end": "15:30"
+  },
+  "max_trades_per_day": 10,
+  "enable_auto_trading": false
+}
