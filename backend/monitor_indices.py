@@ -17,11 +17,12 @@ from strategies.strategy_7_vwap import VWAPStrategy
 from strategies.strategy_8_stochastic import StochasticStrategy
 from strategies.strategy_9_adx import ADXStrategy
 from strategies.strategy_10_volume import VolumeStrategy
-import yfinance as yf
 import pandas as pd
 from datetime import datetime
 import time
 import os
+
+from utils.yahoo_finance import fetch_history, standardize_ohlcv
 
 # Available Indian Indices
 INDICES = {
@@ -236,8 +237,8 @@ def main():
             
             # Fetch live data from Yahoo Finance with error handling
             try:
-                ticker = yf.Ticker(index_info['symbol'])
-                df = ticker.history(period="5d", interval="5m")
+                fetched = fetch_history(index_info['symbol'])
+                df = fetched.df
                 consecutive_errors = 0  # Reset error counter on success
             except Exception as e:
                 consecutive_errors += 1
@@ -268,21 +269,7 @@ def main():
                 continue
             
             # Prepare data
-            df = df.reset_index()
-            
-            # Yahoo Finance may return different columns, handle properly
-            df = df.rename(columns={
-                'Date': 'timestamp',
-                'Datetime': 'timestamp',
-                'Open': 'open',
-                'High': 'high',
-                'Low': 'low',
-                'Close': 'close',
-                'Volume': 'volume'
-            })
-            
-            # Keep only required columns
-            df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+            df = standardize_ohlcv(df)
             
             current_price = df['close'].iloc[-1]
             prev_price = df['close'].iloc[-2] if len(df) > 1 else current_price

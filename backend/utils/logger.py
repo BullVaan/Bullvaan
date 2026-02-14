@@ -96,6 +96,3 @@ if __name__ == "__main__":
 # app_logger.info("Application started")
 # trades_logger.info("Executed BUY: 1 lot NIFTY 22400 CE @ 150")
 # signals_logger.info("RSI Strategy: BUY signal at price 150")
-# Log app events
-app_logger.info("WebSocket connected to Kotak Neo")
-app_logger.error("Failed to fetch option chain")

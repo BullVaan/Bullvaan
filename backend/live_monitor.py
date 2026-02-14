@@ -16,11 +16,12 @@ from strategies.strategy_7_vwap import VWAPStrategy
 from strategies.strategy_8_stochastic import StochasticStrategy
 from strategies.strategy_9_adx import ADXStrategy
 from strategies.strategy_10_volume import VolumeStrategy
-import yfinance as yf
 import pandas as pd
 from datetime import datetime
 import time
 import os
+
+from utils.yahoo_finance import fetch_history, standardize_ohlcv
 
 # Initialize strategies once
 STRATEGIES = [
@@ -182,8 +183,8 @@ def main():
             check_count += 1
             
             # Fetch live data from Yahoo Finance
-            ticker = yf.Ticker("^NSEI")
-            df = ticker.history(period="5d", interval="5m")
+            fetched = fetch_history("^NSEI")
+            df = fetched.df
             
             if df.empty:
                 print("\n⚠️  Could not fetch data, retrying in 30 seconds...")
@@ -191,8 +192,7 @@ def main():
                 continue
             
             # Prepare data
-            df = df.reset_index()
-            df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            df = standardize_ohlcv(df)
             
             current_price = df['close'].iloc[-1]
             prev_price = df['close'].iloc[-2] if len(df) > 1 else current_price

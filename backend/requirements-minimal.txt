@@ -1,9 +1,8 @@
-# Minimal essential packages (no conflicts)
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+# Minimal essential packages for yfinance-based monitoring
 pandas
 numpy
 requests
 python-dotenv
-websocket-client
 ta
+yfinance>=1.1.0
+curl_cffi>=0.13.0
