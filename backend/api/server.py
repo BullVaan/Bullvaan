@@ -1,7 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.market_data import fetch_indices
-
 
 # strategies
 from strategies.strategy_1_moving_average import MovingAverageStrategy
@@ -18,20 +16,21 @@ from strategies.strategy_10_volume import VolumeStrategy
 # data utils
 from utils.yahoo_finance import fetch_history, standardize_ohlcv
 
+# scoring engine
+from engine.smart_engine import calculate_score
+
 app = FastAPI(title="Bullvan Trading API")
 
-
 # =========================
-# CORS (Allow frontend)
+# CORS
 # =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # for dev. Later replace with frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # =========================
 # Supported Indices
@@ -42,9 +41,8 @@ SUPPORTED_INDICES = {
     "^BSESN": "SENSEX",
 }
 
-
 # =========================
-# Initialize Strategies Once
+# Initialize Strategies
 # =========================
 strategies = [
     MovingAverageStrategy(20),
@@ -59,80 +57,53 @@ strategies = [
     VolumeStrategy(),
 ]
 
-
 # =========================
-# Health Check Route
+# Health Check
 # =========================
 @app.get("/")
 def home():
     return {"status": "Bullvan API running"}
 
-
 # =========================
-# Get Signals Route
+# Get Signals
 # =========================
 @app.get("/signals")
 def get_signals(symbol: str = "^NSEI"):
-    """
-    Returns signals for selected index
-    Default = NIFTY
-    """
 
-    # validate symbol
     if symbol not in SUPPORTED_INDICES:
-        return {
-            "error": "Invalid symbol",
-            "supported": list(SUPPORTED_INDICES.keys())
-        }
+        return {"error": "Invalid symbol"}
 
     try:
-        # fetch market data
         fetched = fetch_history(symbol)
         df = standardize_ohlcv(fetched.df)
 
         if df.empty:
-            return {"error": "No market data received"}
+            return {"error": "No market data"}
 
-        # current price
         current_price = float(df["close"].iloc[-1])
 
         results = []
-        votes = []
 
         # run strategies
         for strat in strategies:
             signal = strat.calculate(df)
-
             results.append({
                 "name": strat.name,
                 "signal": signal
             })
 
-            votes.append(signal)
+        # ===== ADVANCED ENGINE =====
+        decision, confidence, score = calculate_score(results)
 
-        # vote counts
-        buy = votes.count("BUY")
-        sell = votes.count("SELL")
-        neutral = votes.count("NEUTRAL")
-
-        # consensus logic
-        if buy >= 7:
-            consensus = "BUY"
-        elif sell >= 7:
-            consensus = "SELL"
-        else:
-            consensus = "NEUTRAL"
-
-        # response
         return {
             "symbol": symbol,
             "index_name": SUPPORTED_INDICES[symbol],
             "price": round(current_price, 2),
-            "consensus": consensus,
-            "buy_votes": buy,
-            "sell_votes": sell,
-            "neutral_votes": neutral,
-            "total_strategies": len(strategies),
+
+            "signal": decision,
+            "confidence": confidence,
+            "score": score,
+
             "signals": results
         }
 
@@ -142,14 +113,9 @@ def get_signals(symbol: str = "^NSEI"):
             "message": str(e)
         }
 
-
 # =========================
-# Available Indices Route
+# Indices List
 # =========================
 @app.get("/indices")
 def get_indices():
     return SUPPORTED_INDICES
-
-@app.get("/market-data")
-def market_data():
-    return fetch_indices()
