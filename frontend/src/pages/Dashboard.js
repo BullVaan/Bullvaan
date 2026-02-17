@@ -90,8 +90,7 @@ function Dashboard() {
           borderBottom: '1px solid #334155'
         }}
       >
-        <h2 style={{ margin: 0 }}>Bullvan Dashboard</h2>
-
+        <div style={{ width: 80 }} />
         <MarketStatus />
 
         <button
@@ -105,7 +104,8 @@ function Dashboard() {
             border: 'none',
             color: 'white',
             cursor: 'pointer',
-            borderRadius: 6
+            borderRadius: 6,
+            flexShrink: 0
           }}
         >
           Logout

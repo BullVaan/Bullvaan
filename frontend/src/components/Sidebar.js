@@ -18,37 +18,89 @@ export default function Sidebar() {
     {
       name: 'Dashboard',
       path: '/dashboard',
-      icon: <LayoutDashboard size={20} />
+      icon: <LayoutDashboard size={24} />
     },
-    { name: 'Trades', path: '/trades', icon: <BarChart3 size={20} /> },
-    { name: 'History', path: '/history', icon: <History size={20} /> },
-    { name: 'Settings', path: '/settings', icon: <Settings size={20} /> }
+    { name: 'Trades', path: '/trades', icon: <BarChart3 size={24} /> },
+    { name: 'History', path: '/history', icon: <History size={24} /> },
+    { name: 'Settings', path: '/settings', icon: <Settings size={24} /> }
   ];
 
   return (
     <div
       style={{
-        width: open ? 230 : 75,
+        width: open ? 240 : 80,
         background: '#020617',
         height: '100vh',
         borderRight: '1px solid #334155',
         transition: '0.3s',
         display: 'flex',
-        flexDirection: 'column'
+        flexDirection: 'column',
+        flexShrink: 0
       }}
     >
-      {/* Toggle */}
+      {/* Logo/Brand */}
       <div
-        onClick={() => setOpen(!open)}
         style={{
-          padding: 16,
-          cursor: 'pointer',
+          padding: open ? '12px 8px 0px 0' : '6px 0px 0px 0',
           borderBottom: '1px solid #334155',
-          textAlign: 'right',
-          color: '#94a3b8'
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: open ? 'space-between' : 'center',
+          minHeight: open ? 30 : 40,
+          position: 'relative'
         }}
       >
-        {open ? <ChevronLeft /> : <ChevronRight />}{' '}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0,
+            transition: '0.3s'
+          }}
+        >
+          <img
+            src="/BullVaan_Logo.png"
+            alt="BullVaan"
+            style={{
+              width: open ? 140 : 90,
+              height: open ? 140 : 90,
+              objectFit: 'contain',
+              transition: '0.3s',
+              marginLeft: open ? -30 : -6,
+              marginRight: open ? -35 : 0,
+              marginTop: open ? -40 : -20,
+              marginBottom: open ? -40 : -20
+            }}
+          />
+          {open && (
+            <span
+              style={{
+                fontWeight: 700,
+                fontSize: 28,
+                color: '#FFFFFF',
+                letterSpacing: 1,
+                whiteSpace: 'nowrap'
+              }}
+            >
+              BullVaan
+            </span>
+          )}
+        </div>
+        <div
+          onClick={() => setOpen(!open)}
+          style={{
+            cursor: 'pointer',
+            color: '#94a3b8',
+            display: 'flex',
+            alignItems: 'center',
+            position: open ? 'static' : 'absolute',
+            right: open ? 'auto' : 4,
+            top: open ? 'auto' : '50%',
+            transform: open ? 'none' : 'translateY(-50%)'
+          }}
+        >
+          {open ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
+        </div>
       </div>
 
       {/* Menu */}
@@ -83,7 +135,7 @@ export default function Sidebar() {
               }
             >
               {item.icon}
-              {open && <span style={{ fontSize: 15 }}>{item.name}</span>}
+              {open && <span style={{ fontSize: 18 }}>{item.name}</span>}
             </div>
           );
         })}
