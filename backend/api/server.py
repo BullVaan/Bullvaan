@@ -1,6 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from api.market_data import fetch_indices
+import asyncio
+import json
+
+from utils.nse_live import fetch_nse_indices
 
 
 # strategies
@@ -150,6 +153,32 @@ def get_signals(symbol: str = "^NSEI"):
 def get_indices():
     return SUPPORTED_INDICES
 
-@app.get("/market-data")
-def market_data():
-    return fetch_indices()
+
+# =========================
+# NSE Ticker (HTTP fallback)
+# =========================
+@app.get("/ticker")
+def get_ticker():
+    """HTTP fallback — returns latest NSE index prices"""
+    return fetch_nse_indices()
+
+
+# =========================
+# WebSocket: Real-time Ticker
+# =========================
+@app.websocket("/ws/ticker")
+async def ws_ticker(websocket: WebSocket):
+    """
+    Streams real-time NSE index prices to the frontend
+    Updates every 2 seconds during market hours
+    """
+    await websocket.accept()
+    try:
+        while True:
+            data = fetch_nse_indices()
+            await websocket.send_text(json.dumps(data))
+            await asyncio.sleep(2)  # push every 2 seconds
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
