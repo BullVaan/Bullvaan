@@ -58,24 +58,41 @@ def fetch_history(
                     threads=False,
                     auto_adjust=False,
                     actions=False,
+                    timeout=10,
                 )
+
+                # Check if df is None or empty before processing
+                if df is None:
+                    continue
 
                 # yf.download can return a MultiIndex for columns in some cases.
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
 
-                if df is not None and not df.empty:
+                if not df.empty:
                     return YahooFetchResult(df=df, symbol=symbol, period=period, interval=interval)
 
                 # Fallback: try Ticker.history() for the same params.
                 ticker = yf.Ticker(symbol)
                 df2 = ticker.history(period=period, interval=interval, actions=False, auto_adjust=False)
+                
+                if df2 is None:
+                    continue
+                    
                 if isinstance(df2.columns, pd.MultiIndex):
                     df2.columns = df2.columns.get_level_values(0)
 
-                if df2 is not None and not df2.empty:
+                if not df2.empty:
                     return YahooFetchResult(df=df2, symbol=symbol, period=period, interval=interval)
 
+            except TypeError as e:
+                # Handle 'NoneType' subscripting errors
+                last_err = e
+                continue
+            except AttributeError as e:
+                # Handle attribute errors
+                last_err = e
+                continue
             except Exception as e:
                 last_err = e
                 continue
