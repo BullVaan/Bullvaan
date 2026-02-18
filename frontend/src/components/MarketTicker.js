@@ -66,22 +66,34 @@ function MarketTicker() {
           position: 'relative',
         }}
       >
-        {/* Connection indicator - fixed position */}
-        <span
-          title={connected ? 'Live' : 'Reconnecting...'}
+
+        {/* Connection indicator with background mask */}
+        <div
           style={{
             position: 'absolute',
-            left: 10,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            background: connected ? '#22c55e' : '#ef4444',
-            boxShadow: connected ? '0 0 6px #22c55e' : '0 0 6px #ef4444',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 30,
+            background: 'linear-gradient(to right, #0f172a 70%, transparent)',
             zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            paddingLeft: 10,
           }}
-        />
+        >
+          <span
+            title={connected ? 'Live' : 'Reconnecting...'}
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: connected ? '#22c55e' : '#ef4444',
+              boxShadow: connected ? '0 0 6px #22c55e' : '0 0 6px #ef4444',
+            }}
+          />
+        </div>
+
 
         {ticker.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#64748b', fontSize: 13 }}>
@@ -94,6 +106,7 @@ function MarketTicker() {
               display: 'flex',
               animation: 'marquee 20s linear infinite',
               width: 'fit-content',
+              paddingLeft: 25,
             }}
           >
             {tickerItems.map((item, idx) => {

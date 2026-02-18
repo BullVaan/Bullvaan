@@ -50,7 +50,7 @@ function Dashboard() {
   }, []);
 
   /* ---------- FETCH SIGNALS ---------- */
-  const fetchSignals = async () => {
+  const fetchSignals = async (symbol) => {
     try {
       setLoading(true);
       setError('');
@@ -79,8 +79,8 @@ function Dashboard() {
 
   /* ---------- AUTO REFRESH ---------- */
   useEffect(() => {
-    fetchSignals();
-    const interval = setInterval(fetchSignals, 500000);
+    fetchSignals(selectedSymbol);
+    const interval = setInterval(() => fetchSignals(selectedSymbol), 300000);
     return () => clearInterval(interval);
   }, [selectedSymbol, selectedTimeframe]);
 
