@@ -18,6 +18,9 @@ from strategies.strategy_9_adx import ADXStrategy
 
 # data utils
 from utils.yahoo_finance import fetch_history, standardize_ohlcv
+import yfinance as yf
+import pandas as pd
+import numpy as np
 
 app = FastAPI(title="Bullvan Trading API")
 
@@ -89,6 +92,62 @@ ACTIVE_TIMEFRAME = "5m"
 
 
 # =========================
+# Helper Functions
+# =========================
+def fetch_india_vix():
+    """Fetch live India VIX (volatility index) with real day change"""
+    try:
+        # Fetch both today and yesterday to get proper previous close
+        vix_data = yf.download("^INDIAVIX", period="5d", interval="1d", progress=False, threads=False, auto_adjust=False)
+        
+        if vix_data is not None and not vix_data.empty:
+            # Current price = today's latest close
+            current_vix = float(vix_data['Close'].iloc[-1])
+            
+            # Previous close = yesterday's close
+            if len(vix_data) > 1:
+                prev_close_vix = float(vix_data['Close'].iloc[-2])
+            else:
+                prev_close_vix = current_vix
+            
+            # Calculate actual day change
+            change = round(current_vix - prev_close_vix, 2)
+            change_pct = round(((current_vix - prev_close_vix) / prev_close_vix) * 100, 2) if prev_close_vix != 0 else 0
+            
+            return {
+                "value": round(current_vix, 2),
+                "change": change,
+                "change_pct": change_pct,
+                "prev_close": round(prev_close_vix, 2)
+            }
+    except Exception as e:
+        logger.error(f"Failed to fetch India VIX: {str(e)}")
+    return {"value": "-", "change": 0, "change_pct": 0, "prev_close": "-"}
+
+
+def calculate_atr(df, period=14):
+    """Calculate Average True Range (ATR)"""
+    try:
+        if len(df) < period:
+            return "-"
+        
+        df_copy = df.copy()
+        df_copy['prev_close'] = df_copy['close'].shift(1)
+        df_copy['high_low'] = df_copy['high'] - df_copy['low']
+        df_copy['high_pc'] = abs(df_copy['high'] - df_copy['prev_close'])
+        df_copy['low_pc'] = abs(df_copy['low'] - df_copy['prev_close'])
+        
+        df_copy['tr'] = df_copy[['high_low', 'high_pc', 'low_pc']].max(axis=1)
+        df_copy['atr'] = df_copy['tr'].rolling(window=period).mean()
+        
+        current_atr = float(df_copy['atr'].iloc[-1])
+        return round(current_atr, 2)
+    except Exception as e:
+        logger.error(f"Failed to calculate ATR: {str(e)}")
+        return "-"
+
+
+# =========================
 # Health Check Route
 # =========================
 @app.get("/")
@@ -138,6 +197,12 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
 
         # current price
         current_price = float(df["close"].iloc[-1])
+        
+        # fetch india vix (live volatility)
+        india_vix = fetch_india_vix()
+        
+        # calculate atr
+        atr = calculate_atr(df, period=14)
 
         all_signals = []
         votes = []
@@ -181,6 +246,8 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
             "timeframe": timeframe,
             "timeframe_info": TIMEFRAME_CONFIG[timeframe],
             "price": round(current_price, 2),
+            "india_vix": india_vix,
+            "atr": atr,
             "consensus": consensus,
             "buy_votes": buy,
             "sell_votes": sell,
