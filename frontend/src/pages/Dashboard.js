@@ -37,13 +37,13 @@ function Dashboard() {
   }, []);
 
   /* ---------- FETCH SIGNALS ---------- */
-  const fetchSignals = async () => {
+  const fetchSignals = async (symbol) => {
     try {
       setLoading(true);
       setError('');
 
       const res = await fetch(
-        `http://127.0.0.1:8000/signals?symbol=${selectedSymbol}`
+        `http://127.0.0.1:8000/signals?symbol=${symbol}`
       );
 
       const data = await res.json();
@@ -65,8 +65,8 @@ function Dashboard() {
 
   /* ---------- AUTO REFRESH ---------- */
   useEffect(() => {
-    fetchSignals();
-    const interval = setInterval(fetchSignals, 500000);
+    fetchSignals(selectedSymbol);
+    const interval = setInterval(() => fetchSignals(selectedSymbol), 300000);
     return () => clearInterval(interval);
   }, [selectedSymbol]);
 
