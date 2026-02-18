@@ -66,6 +66,7 @@ function MarketTicker() {
           position: 'relative',
         }}
       >
+
         {/* Connection indicator with background mask */}
         <div
           style={{
@@ -92,6 +93,7 @@ function MarketTicker() {
             }}
           />
         </div>
+
 
         {ticker.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#64748b', fontSize: 13 }}>
