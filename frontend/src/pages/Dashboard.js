@@ -18,6 +18,13 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [consensus, setConsensus] = useState('NEUTRAL');
   const [price, setPrice] = useState('-');
+  const [india_vix, setIndiaVix] = useState({
+    value: '-',
+    change: 0,
+    change_pct: 0,
+    prev_close: '-'
+  });
+  const [atr, setAtr] = useState('-');
   const [error, setError] = useState('');
 
   /* ---------- AUTH CHECK ---------- */
@@ -70,6 +77,15 @@ function Dashboard() {
       setSignalsByRole(data.signals_by_role || {});
       setConsensus(data.consensus || 'NEUTRAL');
       setPrice(data.price ?? '-');
+      setIndiaVix(
+        data.india_vix || {
+          value: '-',
+          change: 0,
+          change_pct: 0,
+          prev_close: '-'
+        }
+      );
+      setAtr(data.atr ?? '-');
     } catch {
       setError('Cannot connect to backend API');
     } finally {
@@ -251,6 +267,124 @@ function Dashboard() {
               </div>
             </div>
           </div>
+
+          {/* India VIX Card */}
+          {!loading && (
+            <div
+              style={{
+                background: '#020617',
+                border: '1px solid #334155',
+                padding: '14px 22px',
+                borderRadius: 12,
+                width: 140,
+                boxShadow: '0 0 15px rgba(0,0,0,0.4)',
+                cursor: 'help',
+                position: 'relative',
+                group: 'hover'
+              }}
+              title="India VIX measures market fear/volatility. High VIX = more risk, use wider stops. Low VIX = stable market, tight stops work better."
+            >
+              <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>
+                📈 India VIX
+              </div>
+              <div
+                style={{
+                  fontSize: 20,
+                  fontWeight: 'bold',
+                  color: india_vix.change_pct > 0 ? '#ef4444' : '#10b981'
+                }}
+              >
+                {india_vix.value}
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: india_vix.change_pct > 0 ? '#ef4444' : '#10b981',
+                  marginTop: 3
+                }}
+              >
+                {india_vix.change_pct > 0 ? '↑' : '↓'} {india_vix.change} (
+                {Math.abs(india_vix.change_pct)}%)
+              </div>
+              <div
+                style={{
+                  fontSize: 8,
+                  color: '#64748b',
+                  marginTop: 8,
+                  lineHeight: 1.3
+                }}
+              >
+                {india_vix.value > 20
+                  ? '🔴 HIGH - Risk!'
+                  : india_vix.value > 15
+                    ? '🟡 MEDIUM'
+                    : '🟢 LOW - Calm'}
+              </div>
+              <div
+                style={{
+                  fontSize: 8,
+                  color: '#94a3b8',
+                  marginTop: 6,
+                  fontStyle: 'italic',
+                  lineHeight: 1.2
+                }}
+              >
+                Fear Gauge: 10-15=Safe, 15-25=Risky, 25+=Crisis
+              </div>
+            </div>
+          )}
+
+          {/* ATR Card */}
+          {!loading && (
+            <div
+              style={{
+                background: '#020617',
+                border: '1px solid #334155',
+                padding: '14px 22px',
+                borderRadius: 12,
+                width: 140,
+                boxShadow: '0 0 15px rgba(0,0,0,0.4)',
+                cursor: 'help'
+              }}
+              title="ATR shows expected daily price movement. Use ATR value to set Stop Loss (1x ATR) and Take Profit (2x ATR) levels."
+            >
+              <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>
+                ⚡ ATR (14)
+              </div>
+              <div
+                style={{
+                  fontSize: 20,
+                  fontWeight: 'bold',
+                  color: '#3b82f6'
+                }}
+              >
+                {atr}
+              </div>
+              <div style={{ fontSize: 10, color: '#64748b', marginTop: 3 }}>
+                points/day
+              </div>
+              <div
+                style={{
+                  fontSize: 8,
+                  color: '#94a3b8',
+                  marginTop: 8,
+                  lineHeight: 1.2
+                }}
+              >
+                🎯 Stop Loss: -{atr !== '-' ? Math.round(atr) : '?'} pts
+              </div>
+              <div
+                style={{
+                  fontSize: 8,
+                  color: '#22c55e',
+                  marginTop: 4,
+                  lineHeight: 1.2
+                }}
+              >
+                ✓ Target: +{atr !== '-' ? Math.round(atr * 2) : '?'} pts
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
