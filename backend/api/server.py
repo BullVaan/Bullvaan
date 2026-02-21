@@ -226,18 +226,54 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
                 if sig["name"] in indicator_names
             ]
 
-        # vote counts
+        # vote counts (overall)
         buy = votes.count("BUY")
         sell = votes.count("SELL")
         neutral = votes.count("NEUTRAL")
 
-        # consensus logic (scalping: 3+ votes for signal)
-        if buy >= 3:
-            consensus = "BUY"
-        elif sell >= 3:
-            consensus = "SELL"
-        else:
-            consensus = "NEUTRAL"
+        # NEW CONSENSUS LOGIC: Trend + Strength vs Momentum
+        # Trend (2) + Strength (2) = 4 indicators
+        # Momentum = 3 indicators
+        
+        trend_signals = [s["signal"] for s in signals_by_role.get("Trend", [])]
+        strength_signals = [s["signal"] for s in signals_by_role.get("Strength", [])]
+        momentum_signals = [s["signal"] for s in signals_by_role.get("Momentum", [])]
+        
+        # Combine Trend + Strength
+        trend_strength = trend_signals + strength_signals
+        ts_buy = trend_strength.count("BUY")
+        ts_sell = trend_strength.count("SELL")
+        
+        # Momentum counts
+        mom_buy = momentum_signals.count("BUY")
+        mom_sell = momentum_signals.count("SELL")
+        mom_neutral = momentum_signals.count("NEUTRAL")
+        
+        # Determine Trend+Strength direction (need 3+ of 4)
+        ts_direction = None
+        if ts_buy >= 3:
+            ts_direction = "BUY"
+        elif ts_sell >= 3:
+            ts_direction = "SELL"
+        
+        # Apply new rules
+        consensus = "NEUTRAL"
+        stop_loss_warning = False
+        
+        if ts_direction:
+            # Rule 1: Trend+Strength agrees (3+) AND Momentum mostly neutral (2+)
+            if mom_neutral >= 2:
+                consensus = ts_direction
+            # Rule 2: Trend+Strength agrees (3+) AND Momentum says opposite (2+)
+            elif (ts_direction == "BUY" and mom_sell >= 2) or (ts_direction == "SELL" and mom_buy >= 2):
+                consensus = ts_direction
+                stop_loss_warning = True
+            # Rule 3: Momentum agrees with Trend+Strength
+            elif (ts_direction == "BUY" and mom_buy >= 2) or (ts_direction == "SELL" and mom_sell >= 2):
+                consensus = ts_direction
+            else:
+                # Mixed signals
+                consensus = ts_direction
 
         # response
         return {
@@ -249,6 +285,7 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
             "india_vix": india_vix,
             "atr": atr,
             "consensus": consensus,
+            "stop_loss_warning": stop_loss_warning,
             "buy_votes": buy,
             "sell_votes": sell,
             "neutral_votes": neutral,

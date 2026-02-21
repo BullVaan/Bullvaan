@@ -17,6 +17,7 @@ function Dashboard() {
   const [selectedTimeframe, setSelectedTimeframe] = useState('5m');
   const [loading, setLoading] = useState(true);
   const [consensus, setConsensus] = useState('NEUTRAL');
+  const [stopLossWarning, setStopLossWarning] = useState(false);
   const [price, setPrice] = useState('-');
   const [india_vix, setIndiaVix] = useState({
     value: '-',
@@ -76,6 +77,7 @@ function Dashboard() {
       setSignals(Array.isArray(data.signals) ? data.signals : []);
       setSignalsByRole(data.signals_by_role || {});
       setConsensus(data.consensus || 'NEUTRAL');
+      setStopLossWarning(data.stop_loss_warning || false);
       setPrice(data.price ?? '-');
       setIndiaVix(
         data.india_vix || {
@@ -166,7 +168,7 @@ function Dashboard() {
               boxShadow: '0 0 15px rgba(0,0,0,0.4)'
             }}
           >
-            <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 6 }}>
+            <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>
               Select Index
             </div>
 
@@ -210,6 +212,23 @@ function Dashboard() {
             >
               {consensus}
             </div>
+
+            {stopLossWarning && consensus !== 'NEUTRAL' && (
+              <div
+                style={{
+                  marginTop: 6,
+                  padding: '4px 10px',
+                  background: '#fbbf24',
+                  color: '#000',
+                  fontSize: 12,
+                  fontWeight: 'bold',
+                  borderRadius: 4,
+                  display: 'inline-block'
+                }}
+              >
+                ⚠️ USE STOP LOSS
+              </div>
+            )}
           </div>
 
           {/* Timeframe Selector */}
@@ -223,7 +242,7 @@ function Dashboard() {
               boxShadow: '0 0 15px rgba(0,0,0,0.4)'
             }}
           >
-            <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 6 }}>
+            <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>
               Scalping Timeframe
             </div>
 
@@ -255,16 +274,30 @@ function Dashboard() {
 
             <div
               style={{
-                marginTop: 12,
-                fontSize: 12,
-                color: '#cbd5e1',
-                lineHeight: 1.5
+                marginTop: 10,
+                fontSize: 14,
+                color: '#94a3b8',
+                lineHeight: 1.4
               }}
             >
-              <div>📊 {selectedTimeframe} Scalping</div>
-              <div style={{ marginTop: 4, fontSize: 11 }}>
-                {timeframes[selectedTimeframe]?.description}
-              </div>
+              {selectedTimeframe === '5m' && (
+                <>
+                  <div>⚡ Quick entries, exit in 5-15 mins</div>
+                  <div style={{ marginTop: 4 }}>🎯 Target: 10-20 pts | SL: 10 pts</div>
+                </>
+              )}
+              {selectedTimeframe === '15m' && (
+                <>
+                  <div>📊 Hold 15-45 mins for trend</div>
+                  <div style={{ marginTop: 4 }}>🎯 Target: 30-50 pts | SL: 20 pts</div>
+                </>
+              )}
+              {selectedTimeframe === '30m' && (
+                <>
+                  <div>🔄 Swing-scalp, hold 30-90 mins</div>
+                  <div style={{ marginTop: 4 }}>🎯 Target: 50-100 pts | SL: 30 pts</div>
+                </>
+              )}
             </div>
           </div>
 
@@ -284,7 +317,7 @@ function Dashboard() {
               }}
               title="India VIX measures market fear/volatility. High VIX = more risk, use wider stops. Low VIX = stable market, tight stops work better."
             >
-              <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>
+              <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>
                 📈 India VIX
               </div>
               <div
@@ -298,7 +331,7 @@ function Dashboard() {
               </div>
               <div
                 style={{
-                  fontSize: 11,
+                  fontSize: 14,
                   color: india_vix.change_pct > 0 ? '#ef4444' : '#10b981',
                   marginTop: 3
                 }}
@@ -308,7 +341,7 @@ function Dashboard() {
               </div>
               <div
                 style={{
-                  fontSize: 8,
+                  fontSize: 13,
                   color: '#64748b',
                   marginTop: 8,
                   lineHeight: 1.3
@@ -322,7 +355,7 @@ function Dashboard() {
               </div>
               <div
                 style={{
-                  fontSize: 8,
+                  fontSize: 12,
                   color: '#94a3b8',
                   marginTop: 6,
                   fontStyle: 'italic',
@@ -348,7 +381,7 @@ function Dashboard() {
               }}
               title="ATR shows expected daily price movement. Use ATR value to set Stop Loss (1x ATR) and Take Profit (2x ATR) levels."
             >
-              <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>
+              <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>
                 ⚡ ATR (14)
               </div>
               <div
@@ -360,12 +393,12 @@ function Dashboard() {
               >
                 {atr}
               </div>
-              <div style={{ fontSize: 10, color: '#64748b', marginTop: 3 }}>
+              <div style={{ fontSize: 13, color: '#64748b', marginTop: 3 }}>
                 points/day
               </div>
               <div
                 style={{
-                  fontSize: 8,
+                  fontSize: 13,
                   color: '#94a3b8',
                   marginTop: 8,
                   lineHeight: 1.2
@@ -375,7 +408,7 @@ function Dashboard() {
               </div>
               <div
                 style={{
-                  fontSize: 8,
+                  fontSize: 13,
                   color: '#22c55e',
                   marginTop: 4,
                   lineHeight: 1.2
