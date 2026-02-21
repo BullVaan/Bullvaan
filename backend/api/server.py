@@ -1,4 +1,5 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from .zerodha_option import zerodha_option_price
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
@@ -23,6 +24,7 @@ import pandas as pd
 import numpy as np
 
 app = FastAPI(title="Bullvan Trading API")
+app.add_api_route("/zerodha-option-price", zerodha_option_price, methods=["GET"])
 
 # =========================
 # Setup Logging

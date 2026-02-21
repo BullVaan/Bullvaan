@@ -1,16 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import RoleCard from '../components/RoleCard';
-import OptionSuggestion from '../components/OptionSuggestion';
 import MarketTicker from '../components/MarketTicker';
 import MarketStatus from '../components/MarketStatus';
 import MainLayout from '../layout/MainLayout';
 
 function Dashboard() {
   const navigate = useNavigate();
-
-  const [signals, setSignals] = useState([]);
-  const [signals_by_role, setSignalsByRole] = useState({});
   const [indices, setIndices] = useState({});
   const [timeframes, setTimeframes] = useState({});
   const [selectedSymbol, setSelectedSymbol] = useState('^NSEI');
@@ -26,6 +21,12 @@ function Dashboard() {
   });
   const [atr, setAtr] = useState('-');
   const [error, setError] = useState('');
+
+  // Zerodha Option Price State
+  const [zerodhaOptionInput, setZerodhaOptionInput] = useState('');
+  const [zerodhaOptionPrice, setZerodhaOptionPrice] = useState(null);
+  const [zerodhaOptionLoading, setZerodhaOptionLoading] = useState(false);
+  const [zerodhaOptionError, setZerodhaOptionError] = useState('');
 
   /* ---------- AUTH CHECK ---------- */
   useEffect(() => {
@@ -73,8 +74,8 @@ function Dashboard() {
         return;
       }
 
-      setSignals(Array.isArray(data.signals) ? data.signals : []);
-      setSignalsByRole(data.signals_by_role || {});
+      // setSignals(Array.isArray(data.signals) ? data.signals : []);
+      // setSignalsByRole(data.signals_by_role || {});
       setConsensus(data.consensus || 'NEUTRAL');
       setPrice(data.price ?? '-');
       setIndiaVix(
@@ -98,6 +99,7 @@ function Dashboard() {
     fetchSignals(selectedSymbol);
     const interval = setInterval(() => fetchSignals(selectedSymbol), 300000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSymbol, selectedTimeframe]);
 
   /* ---------- CONSENSUS COLOR ---------- */
@@ -107,6 +109,39 @@ function Dashboard() {
       : consensus === 'SELL'
         ? '#ef4444'
         : '#eab308';
+
+  // Fetch Zerodha Option Price
+  const fetchZerodhaOptionPrice = async () => {
+    if (!zerodhaOptionInput.trim()) {
+      setZerodhaOptionError(
+        'Please enter a valid option (e.g. 25700 NIFTY CE)'
+      );
+      return;
+    }
+    setZerodhaOptionLoading(true);
+    setZerodhaOptionError('');
+    setZerodhaOptionPrice(null);
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:8000/zerodha-option-price?query=${encodeURIComponent(zerodhaOptionInput)}`
+      );
+      const data = await res.json();
+      if (data.success && data.price) {
+        setZerodhaOptionPrice(data.price);
+      } else {
+        setZerodhaOptionError(data.error || 'No price data');
+      }
+    } catch (e) {
+      setZerodhaOptionError('Error fetching option price');
+    } finally {
+      setZerodhaOptionLoading(false);
+    }
+  };
+
+  // Handle input change for option price
+  const handleOptionInputChange = (e) => {
+    setZerodhaOptionInput(e.target.value);
+  };
 
   return (
     <MainLayout>
@@ -400,41 +435,84 @@ function Dashboard() {
         </div>
       )}
 
-      {/* OPTION SUGGESTION CARD */}
-      {!loading && consensus !== 'NEUTRAL' && (
-        <div style={{ padding: '0 30px' }}>
-          <OptionSuggestion
-            signal={consensus}
-            price={parseFloat(price)}
-            symbol={selectedSymbol}
-          />
-        </div>
-      )}
-
-      {/* SIGNAL CARDS BY ROLE */}
-      {!loading && (
+      {/* ZERODHA OPTION PRICE UI */}
+      <div
+        style={{
+          background: '#1e293b',
+          border: '1px solid #334155',
+          padding: '18px 28px',
+          borderRadius: 16,
+          width: 340,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+          margin: '24px auto',
+          fontFamily: 'inherit',
+          textAlign: 'center',
+          position: 'relative'
+        }}
+      >
         <div
           style={{
-            display: 'flex',
-            flexWrap: 'nowrap',
-            gap: 12,
-            justifyContent: 'center',
-            alignItems: 'stretch',
-            padding: '20px 15px',
-            overflowX: 'auto',
-            maxWidth: '1050px',
-            margin: '0 auto'
+            fontSize: 15,
+            color: '#94a3b8',
+            marginBottom: 10,
+            fontWeight: 500
           }}
         >
-          {!signals_by_role || Object.keys(signals_by_role).length === 0 ? (
-            <div>No signals available</div>
-          ) : (
-            Object.entries(signals_by_role).map(([role, indicators]) => (
-              <RoleCard key={role} role={role} indicators={indicators} />
-            ))
-          )}
+          Zerodha Option Live Price
         </div>
-      )}
+        <input
+          type="text"
+          value={zerodhaOptionInput}
+          onChange={handleOptionInputChange}
+          placeholder="e.g. 25500 NIFTY CE 24FEB or NIFTY26FEB25550CE"
+          style={{
+            width: '80%',
+            padding: 10,
+            borderRadius: 8,
+            background: '#1e293b',
+            color: '#f1f5f9',
+            border: '1px solid #475569',
+            fontSize: 15,
+            outline: 'none',
+            marginBottom: 10,
+            fontWeight: 500
+          }}
+          autoComplete="off"
+        />
+        <button
+          onClick={fetchZerodhaOptionPrice}
+          style={{
+            padding: '8px 18px',
+            background: '#2563eb',
+            border: 'none',
+            color: 'white',
+            cursor: 'pointer',
+            borderRadius: 8,
+            fontWeight: 600,
+            fontSize: 15,
+            marginLeft: 12,
+            transition: 'background 0.2s'
+          }}
+          disabled={zerodhaOptionLoading}
+        >
+          {zerodhaOptionLoading ? 'Fetching...' : 'Get Price'}
+        </button>
+        <div
+          style={{
+            fontSize: 18,
+            color: '#22c55e',
+            fontWeight: 700,
+            marginTop: 10
+          }}
+        >
+          {zerodhaOptionPrice !== null && `Live Price: ₹ ${zerodhaOptionPrice}`}
+        </div>
+        {zerodhaOptionError && (
+          <div style={{ color: '#ef4444', marginTop: 6 }}>
+            {zerodhaOptionError}
+          </div>
+        )}
+      </div>
     </MainLayout>
   );
 }
