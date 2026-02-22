@@ -43,3 +43,4 @@ logs/
 .env.*
 *.pem
 *.key
+node_modules

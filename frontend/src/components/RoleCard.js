@@ -36,9 +36,6 @@ export default function RoleCard({ role, indicators }) {
   return (
     <div
       style={{
-        width: '100%',
-        minWidth: 280,
-        maxWidth: 320,
         flex: 1,
         padding: 16,
         borderRadius: 12,

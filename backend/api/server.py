@@ -70,6 +70,27 @@ strategies = [
     ADXStrategy(14, 25),                # Trend strength filter
 ]
 
+NIFTY50_SYMBOLS = [
+    "RELIANCE.NS","TCS.NS","HDFCBANK.NS","ICICIBANK.NS","INFY.NS",
+    "ITC.NS","LT.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS",
+    "HINDUNILVR.NS","ASIANPAINT.NS","MARUTI.NS","SUNPHARMA.NS","TITAN.NS",
+    "ULTRACEMCO.NS","NESTLEIND.NS","WIPRO.NS","NTPC.NS","POWERGRID.NS",
+    "JSWSTEEL.NS","TATASTEEL.NS","BAJFINANCE.NS","BAJAJFINSV.NS","ONGC.NS",
+    "HCLTECH.NS","TECHM.NS","COALINDIA.NS","INDUSINDBK.NS","ADANIENT.NS",
+    "ADANIPORTS.NS","BHARTIARTL.NS","BRITANNIA.NS","CIPLA.NS","DIVISLAB.NS",
+    "DRREDDY.NS","EICHERMOT.NS","GRASIM.NS","HEROMOTOCO.NS","HINDALCO.NS",
+    "BPCL.NS","IOC.NS","M&M.NS","SHREECEM.NS","SBILIFE.NS",
+    "TATACONSUM.NS","UPL.NS","APOLLOHOSP.NS","BAJAJ-AUTO.NS","PIDILITIND.NS"
+]
+
+SECTOR_MAP = {
+    "TCS":"IT","INFY":"IT","WIPRO":"IT","HCLTECH":"IT","TECHM":"IT",
+    "RELIANCE":"Energy","ONGC":"Energy","IOC":"Energy","BPCL":"Energy",
+    "HDFCBANK":"Bank","ICICIBANK":"Bank","SBIN":"Bank","AXISBANK":"Bank","KOTAKBANK":"Bank",
+    "LT":"Infra","ULTRACEMCO":"Infra","GRASIM":"Infra",
+    "ITC":"FMCG","HINDUNILVR":"FMCG","NESTLEIND":"FMCG","BRITANNIA":"FMCG",
+}
+
 # =========================
 # Strategy Roles (Group by Purpose) - SCALPING CONFIG
 # =========================
@@ -124,6 +145,30 @@ def fetch_india_vix():
         logger.error(f"Failed to fetch India VIX: {str(e)}")
     return {"value": "-", "change": 0, "change_pct": 0, "prev_close": "-"}
 
+def detect_breakout(df):
+    if len(df) < 2:
+        return "NONE"
+
+    prev_high = df["High"].iloc[-2]
+    prev_low = df["Low"].iloc[-2]
+    current = df["Close"].iloc[-1]
+
+    if current > prev_high:
+        return "BREAKOUT"
+    elif current < prev_low:
+        return "BREAKDOWN"
+    return "NONE"
+
+def momentum_score(change_pct, volume, avg_volume):
+    vol_score = min(volume / avg_volume, 2) * 50
+    price_score = min(abs(change_pct), 5) * 10
+    return round(vol_score + price_score)
+
+# =========================
+# ATM Strike Finder
+# =========================
+def nearest_strike(price):
+    return round(price / 50) * 50
 
 def calculate_atr(df, period=14):
     """Calculate Average True Range (ATR)"""
@@ -146,7 +191,76 @@ def calculate_atr(df, period=14):
         logger.error(f"Failed to calculate ATR: {str(e)}")
         return "-"
 
+def fetch_nifty50_movers():
+    try:
+        data = yf.download(
+            tickers=" ".join(NIFTY50_SYMBOLS),
+            period="2d",
+            interval="1d",
+            group_by="ticker",
+            progress=False,
+            threads=True
+        )
 
+        movers = []
+
+        for symbol in NIFTY50_SYMBOLS:
+            try:
+                df = data[symbol].dropna()
+
+                if len(df) < 2:
+                    continue
+
+                prev_close = df["Close"].iloc[-2]
+                current = df["Close"].iloc[-1]
+                volume = int(df["Volume"].iloc[-1])
+                avg_vol = df["Volume"].mean()
+
+                change_pct = ((current - prev_close) / prev_close) * 100
+                price_change = current - prev_close
+
+                stock = symbol.replace(".NS", "")
+
+                # breakout detection
+                breakout = detect_breakout(df)
+
+                # momentum score
+                score = momentum_score(change_pct, volume, avg_vol)
+
+                movers.append({
+                "symbol": stock,
+                "price": round(float(current), 2),
+                "percentChange": round(float(change_pct), 2),
+                "priceChange": round(float(price_change), 2),   # ← ADD THIS
+                "volume": volume,
+                "sector": SECTOR_MAP.get(stock, "Other"),
+                "breakout": breakout,
+                "momentum": score,
+                "optionStrike": nearest_strike(current)
+            })
+
+            except Exception as e:
+                logger.warning(f"Skipping {symbol}: {e}")
+                continue
+
+        # ===== strongest sector calculation =====
+        sector_perf = {}
+        for s in movers:
+            sector_perf.setdefault(s["sector"], []).append(s["percentChange"])
+
+        strongest_sector = "Unknown"
+
+        if sector_perf:
+            strongest_sector = max(
+                sector_perf.items(),
+                key=lambda x: sum(x[1]) / len(x[1])
+            )[0]
+
+        return movers, strongest_sector
+
+    except Exception as e:
+        logger.error(f"Nifty50 fetch error: {e}", exc_info=True)
+        return [], "Unknown"
 # =========================
 # Health Check Route
 # =========================
@@ -380,3 +494,55 @@ async def ws_ticker(websocket: WebSocket):
         pass
     except Exception:
         pass
+  
+@app.websocket("/ws/nifty50")
+async def ws_nifty50(websocket: WebSocket):
+
+    await websocket.accept()
+
+    try:
+        while True:
+            movers, sector = fetch_nifty50_movers()
+
+            movers.sort(
+                key=lambda x: abs(x["percentChange"]),
+                reverse=True
+            )
+
+            await websocket.send_text(json.dumps({
+                "data": movers,
+                "sector": sector
+            }))
+
+            await asyncio.sleep(10)
+
+    except WebSocketDisconnect:
+        logger.info("Client disconnected from Nifty50 stream")
+
+    except Exception as e:
+        logger.error(f"Nifty50 WS error: {e}", exc_info=True)
+
+@app.get("/nifty50-movers")
+def nifty50_movers():
+    data, sector = fetch_nifty50_movers()
+
+    if not data:
+        return {"error":"Failed to fetch market data"}
+
+    data.sort(key=lambda x: abs(x["percentChange"]), reverse=True)
+
+    return {
+        "sector": sector,
+        "data": data
+    }
+
+@app.get("/history")
+def get_history(symbol: str):
+    import yfinance as yf
+
+    df = yf.download(symbol + ".NS", period="1d", interval="5m")
+
+    return [
+        {"time": str(i.time()), "price": float(row["Close"])}
+        for i, row in df.iterrows()
+    ] 

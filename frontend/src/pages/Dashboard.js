@@ -4,7 +4,6 @@ import RoleCard from '../components/RoleCard';
 import OptionSuggestion from '../components/OptionSuggestion';
 import MarketTicker from '../components/MarketTicker';
 import MarketStatus from '../components/MarketStatus';
-import MainLayout from '../layout/MainLayout';
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -111,7 +110,7 @@ function Dashboard() {
         : '#eab308';
 
   return (
-    <MainLayout>
+    <div style={{ width: '100%', overflow: 'hidden' }}>
       <div
         style={{
           background: '#020617',
@@ -147,280 +146,299 @@ function Dashboard() {
       {/* MARKET STRIP */}
       <MarketTicker />
 
-      {/* SELECT INDEX & TIMEFRAME */}
-      <div style={{ textAlign: 'center', padding: 20 }}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'center',
-            gap: 15,
-            flexWrap: 'wrap'
-          }}
-        >
-          {/* Index Selector */}
+      <div
+        style={{
+          background: '#020617',
+          border: '2px solid #334155',
+          borderRadius: 10,
+          padding: 24,
+          marginBottom: 18,
+          maxWidth: 860
+        }}
+      >
+        {/* SELECT INDEX & TIMEFRAME */}
+        <div style={{ textAlign: 'center' }}>
           <div
             style={{
-              background: '#020617',
-              border: '1px solid #334155',
-              padding: '14px 22px',
-              borderRadius: 12,
-              width: 250,
-              boxShadow: '0 0 15px rgba(0,0,0,0.4)'
+              display: 'flex',
+              gap: 15,
+              flexWrap: 'wrap'
             }}
           >
-            <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>
-              Select Index
-            </div>
-
-            <select
-              value={selectedSymbol}
-              onChange={(e) => setSelectedSymbol(e.target.value)}
-              style={{
-                width: '100%',
-                padding: 10,
-                borderRadius: 8,
-                background: '#020617',
-                color: 'white',
-                border: '1px solid #475569',
-                fontSize: 14,
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              {Object.keys(indices).length === 0 ? (
-                <option>Loading...</option>
-              ) : (
-                Object.entries(indices).map(([symbol, name]) => (
-                  <option key={symbol} value={symbol}>
-                    {name}
-                  </option>
-                ))
-              )}
-            </select>
-
-            <div style={{ marginTop: 12, fontSize: 18, fontWeight: 'bold' }}>
-              ₹ {price}
-            </div>
-
+            {/* Index Selector */}
             <div
               style={{
-                marginTop: 4,
-                fontWeight: 'bold',
-                fontSize: 20,
-                color: consensusColor
+                background: '#020617',
+                border: '1px solid #334155',
+                padding: '14px 22px',
+                borderRadius: 12,
+                width: 150,
+                boxShadow: '0 0 15px rgba(0,0,0,0.4)'
               }}
             >
-              {consensus}
-            </div>
+              <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>
+                Select Index
+              </div>
 
-            {stopLossWarning && consensus !== 'NEUTRAL' && (
-              <div
+              <select
+                value={selectedSymbol}
+                onChange={(e) => setSelectedSymbol(e.target.value)}
                 style={{
-                  marginTop: 6,
-                  padding: '4px 10px',
-                  background: '#fbbf24',
-                  color: '#000',
-                  fontSize: 12,
-                  fontWeight: 'bold',
-                  borderRadius: 4,
-                  display: 'inline-block'
+                  width: '100%',
+                  padding: 10,
+                  borderRadius: 8,
+                  background: '#020617',
+                  color: 'white',
+                  border: '1px solid #475569',
+                  fontSize: 14,
+                  outline: 'none',
+                  cursor: 'pointer'
                 }}
               >
-                ⚠️ USE STOP LOSS
+                {Object.keys(indices).length === 0 ? (
+                  <option>Loading...</option>
+                ) : (
+                  Object.entries(indices).map(([symbol, name]) => (
+                    <option key={symbol} value={symbol}>
+                      {name}
+                    </option>
+                  ))
+                )}
+              </select>
+
+              <div style={{ marginTop: 12, fontSize: 18, fontWeight: 'bold' }}>
+                ₹ {price}
+              </div>
+
+              <div
+                style={{
+                  marginTop: 4,
+                  fontWeight: 'bold',
+                  fontSize: 20,
+                  color: consensusColor
+                }}
+              >
+                {consensus}
+              </div>
+
+              {stopLossWarning && consensus !== 'NEUTRAL' && (
+                <div
+                  style={{
+                    marginTop: 6,
+                    padding: '4px 10px',
+                    background: '#fbbf24',
+                    color: '#000',
+                    fontSize: 12,
+                    fontWeight: 'bold',
+                    borderRadius: 4,
+                    display: 'inline-block'
+                  }}
+                >
+                  ⚠️ USE STOP LOSS
+                </div>
+              )}
+            </div>
+
+            {/* Timeframe Selector */}
+            <div
+              style={{
+                background: '#020617',
+                border: '1px solid #334155',
+                padding: '14px 22px',
+                borderRadius: 12,
+                width: 200,
+                boxShadow: '0 0 15px rgba(0,0,0,0.4)'
+              }}
+            >
+              <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>
+                Scalping Timeframe
+              </div>
+
+              <select
+                value={selectedTimeframe}
+                onChange={(e) => setSelectedTimeframe(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: 10,
+                  borderRadius: 8,
+                  background: '#020617',
+                  color: 'white',
+                  border: '1px solid #475569',
+                  fontSize: 14,
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                {Object.keys(timeframes).length === 0 ? (
+                  <option>Loading...</option>
+                ) : (
+                  Object.entries(timeframes).map(([tf, config]) => (
+                    <option key={tf} value={tf}>
+                      {tf} - {config.description}
+                    </option>
+                  ))
+                )}
+              </select>
+
+              <div
+                style={{
+                  marginTop: 10,
+                  fontSize: 14,
+                  color: '#94a3b8',
+                  lineHeight: 1.4
+                }}
+              >
+                {selectedTimeframe === '5m' && (
+                  <>
+                    <div>⚡ Quick entries, exit in 5-15 mins</div>
+                    <div style={{ marginTop: 4 }}>
+                      🎯 Target: 10-20 pts | SL: 10 pts
+                    </div>
+                  </>
+                )}
+                {selectedTimeframe === '15m' && (
+                  <>
+                    <div>📊 Hold 15-45 mins for trend</div>
+                    <div style={{ marginTop: 4 }}>
+                      🎯 Target: 30-50 pts | SL: 20 pts
+                    </div>
+                  </>
+                )}
+                {selectedTimeframe === '30m' && (
+                  <>
+                    <div>🔄 Swing-scalp, hold 30-90 mins</div>
+                    <div style={{ marginTop: 4 }}>
+                      🎯 Target: 50-100 pts | SL: 30 pts
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* India VIX Card */}
+            {!loading && (
+              <div
+                style={{
+                  background: '#020617',
+                  border: '1px solid #334155',
+                  padding: '14px 22px',
+                  borderRadius: 12,
+                  width: 140,
+                  boxShadow: '0 0 15px rgba(0,0,0,0.4)',
+                  cursor: 'help',
+                  position: 'relative',
+                  group: 'hover'
+                }}
+                title="India VIX measures market fear/volatility. High VIX = more risk, use wider stops. Low VIX = stable market, tight stops work better."
+              >
+                <div
+                  style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}
+                >
+                  📈 India VIX
+                </div>
+                <div
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 'bold',
+                    color: india_vix.change_pct > 0 ? '#ef4444' : '#10b981'
+                  }}
+                >
+                  {india_vix.value}
+                </div>
+                <div
+                  style={{
+                    fontSize: 14,
+                    color: india_vix.change_pct > 0 ? '#ef4444' : '#10b981',
+                    marginTop: 3
+                  }}
+                >
+                  {india_vix.change_pct > 0 ? '↑' : '↓'} {india_vix.change} (
+                  {Math.abs(india_vix.change_pct)}%)
+                </div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: '#64748b',
+                    marginTop: 8,
+                    lineHeight: 1.3
+                  }}
+                >
+                  {india_vix.value > 20
+                    ? '🔴 HIGH - Risk!'
+                    : india_vix.value > 15
+                      ? '🟡 MEDIUM'
+                      : '🟢 LOW - Calm'}
+                </div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: '#94a3b8',
+                    marginTop: 6,
+                    fontStyle: 'italic',
+                    lineHeight: 1.2
+                  }}
+                >
+                  Fear Gauge: 10-15=Safe, 15-25=Risky, 25+=Crisis
+                </div>
+              </div>
+            )}
+
+            {/* ATR Card */}
+            {!loading && (
+              <div
+                style={{
+                  background: '#020617',
+                  border: '1px solid #334155',
+                  padding: '14px 22px',
+                  borderRadius: 12,
+                  width: 140,
+                  boxShadow: '0 0 15px rgba(0,0,0,0.4)',
+                  cursor: 'help'
+                }}
+                title="ATR shows expected daily price movement. Use ATR value to set Stop Loss (1x ATR) and Take Profit (2x ATR) levels."
+              >
+                <div
+                  style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}
+                >
+                  ⚡ ATR (14)
+                </div>
+                <div
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 'bold',
+                    color: '#3b82f6'
+                  }}
+                >
+                  {atr}
+                </div>
+                <div style={{ fontSize: 13, color: '#64748b', marginTop: 3 }}>
+                  points/day
+                </div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: '#94a3b8',
+                    marginTop: 8,
+                    lineHeight: 1.2
+                  }}
+                >
+                  🎯 Stop Loss: -{atr !== '-' ? Math.round(atr) : '?'} pts
+                </div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: '#22c55e',
+                    marginTop: 4,
+                    lineHeight: 1.2
+                  }}
+                >
+                  ✓ Target: +{atr !== '-' ? Math.round(atr * 2) : '?'} pts
+                </div>
               </div>
             )}
           </div>
-
-          {/* Timeframe Selector */}
-          <div
-            style={{
-              background: '#020617',
-              border: '1px solid #334155',
-              padding: '14px 22px',
-              borderRadius: 12,
-              width: 250,
-              boxShadow: '0 0 15px rgba(0,0,0,0.4)'
-            }}
-          >
-            <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>
-              Scalping Timeframe
-            </div>
-
-            <select
-              value={selectedTimeframe}
-              onChange={(e) => setSelectedTimeframe(e.target.value)}
-              style={{
-                width: '100%',
-                padding: 10,
-                borderRadius: 8,
-                background: '#020617',
-                color: 'white',
-                border: '1px solid #475569',
-                fontSize: 14,
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              {Object.keys(timeframes).length === 0 ? (
-                <option>Loading...</option>
-              ) : (
-                Object.entries(timeframes).map(([tf, config]) => (
-                  <option key={tf} value={tf}>
-                    {tf} - {config.description}
-                  </option>
-                ))
-              )}
-            </select>
-
-            <div
-              style={{
-                marginTop: 10,
-                fontSize: 14,
-                color: '#94a3b8',
-                lineHeight: 1.4
-              }}
-            >
-              {selectedTimeframe === '5m' && (
-                <>
-                  <div>⚡ Quick entries, exit in 5-15 mins</div>
-                  <div style={{ marginTop: 4 }}>🎯 Target: 10-20 pts | SL: 10 pts</div>
-                </>
-              )}
-              {selectedTimeframe === '15m' && (
-                <>
-                  <div>📊 Hold 15-45 mins for trend</div>
-                  <div style={{ marginTop: 4 }}>🎯 Target: 30-50 pts | SL: 20 pts</div>
-                </>
-              )}
-              {selectedTimeframe === '30m' && (
-                <>
-                  <div>🔄 Swing-scalp, hold 30-90 mins</div>
-                  <div style={{ marginTop: 4 }}>🎯 Target: 50-100 pts | SL: 30 pts</div>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* India VIX Card */}
-          {!loading && (
-            <div
-              style={{
-                background: '#020617',
-                border: '1px solid #334155',
-                padding: '14px 22px',
-                borderRadius: 12,
-                width: 140,
-                boxShadow: '0 0 15px rgba(0,0,0,0.4)',
-                cursor: 'help',
-                position: 'relative',
-                group: 'hover'
-              }}
-              title="India VIX measures market fear/volatility. High VIX = more risk, use wider stops. Low VIX = stable market, tight stops work better."
-            >
-              <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>
-                📈 India VIX
-              </div>
-              <div
-                style={{
-                  fontSize: 20,
-                  fontWeight: 'bold',
-                  color: india_vix.change_pct > 0 ? '#ef4444' : '#10b981'
-                }}
-              >
-                {india_vix.value}
-              </div>
-              <div
-                style={{
-                  fontSize: 14,
-                  color: india_vix.change_pct > 0 ? '#ef4444' : '#10b981',
-                  marginTop: 3
-                }}
-              >
-                {india_vix.change_pct > 0 ? '↑' : '↓'} {india_vix.change} (
-                {Math.abs(india_vix.change_pct)}%)
-              </div>
-              <div
-                style={{
-                  fontSize: 13,
-                  color: '#64748b',
-                  marginTop: 8,
-                  lineHeight: 1.3
-                }}
-              >
-                {india_vix.value > 20
-                  ? '🔴 HIGH - Risk!'
-                  : india_vix.value > 15
-                    ? '🟡 MEDIUM'
-                    : '🟢 LOW - Calm'}
-              </div>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: '#94a3b8',
-                  marginTop: 6,
-                  fontStyle: 'italic',
-                  lineHeight: 1.2
-                }}
-              >
-                Fear Gauge: 10-15=Safe, 15-25=Risky, 25+=Crisis
-              </div>
-            </div>
-          )}
-
-          {/* ATR Card */}
-          {!loading && (
-            <div
-              style={{
-                background: '#020617',
-                border: '1px solid #334155',
-                padding: '14px 22px',
-                borderRadius: 12,
-                width: 140,
-                boxShadow: '0 0 15px rgba(0,0,0,0.4)',
-                cursor: 'help'
-              }}
-              title="ATR shows expected daily price movement. Use ATR value to set Stop Loss (1x ATR) and Take Profit (2x ATR) levels."
-            >
-              <div style={{ fontSize: 15, color: '#94a3b8', marginBottom: 6 }}>
-                ⚡ ATR (14)
-              </div>
-              <div
-                style={{
-                  fontSize: 20,
-                  fontWeight: 'bold',
-                  color: '#3b82f6'
-                }}
-              >
-                {atr}
-              </div>
-              <div style={{ fontSize: 13, color: '#64748b', marginTop: 3 }}>
-                points/day
-              </div>
-              <div
-                style={{
-                  fontSize: 13,
-                  color: '#94a3b8',
-                  marginTop: 8,
-                  lineHeight: 1.2
-                }}
-              >
-                🎯 Stop Loss: -{atr !== '-' ? Math.round(atr) : '?'} pts
-              </div>
-              <div
-                style={{
-                  fontSize: 13,
-                  color: '#22c55e',
-                  marginTop: 4,
-                  lineHeight: 1.2
-                }}
-              >
-                ✓ Target: +{atr !== '-' ? Math.round(atr * 2) : '?'} pts
-              </div>
-            </div>
-          )}
         </div>
       </div>
-
       {/* ERROR */}
       {error && (
         <div style={{ textAlign: 'center', color: 'red' }}>{error}</div>
@@ -435,7 +453,7 @@ function Dashboard() {
 
       {/* OPTION SUGGESTION CARD */}
       {!loading && consensus !== 'NEUTRAL' && (
-        <div style={{ padding: '0 30px' }}>
+        <div>
           <OptionSuggestion
             signal={consensus}
             price={parseFloat(price)}
@@ -448,27 +466,45 @@ function Dashboard() {
       {!loading && (
         <div
           style={{
-            display: 'flex',
-            flexWrap: 'nowrap',
-            gap: 12,
-            justifyContent: 'center',
-            alignItems: 'stretch',
-            padding: '20px 15px',
-            overflowX: 'auto',
-            maxWidth: '1050px',
-            margin: '0 auto'
+            maxWidth: 860,
+            padding: 18,
+            borderRadius: 14,
+            border: '1px solid #334155',
+            background: '#020617'
           }}
         >
-          {!signals_by_role || Object.keys(signals_by_role).length === 0 ? (
-            <div>No signals available</div>
-          ) : (
-            Object.entries(signals_by_role).map(([role, indicators]) => (
-              <RoleCard key={role} role={role} indicators={indicators} />
-            ))
-          )}
+          {/* PANEL TITLE */}
+          <div
+            style={{
+              fontSize: 16,
+              fontWeight: 'bold',
+              marginBottom: 14,
+              color: '#94a3b8',
+              textAlign: 'center'
+            }}
+          >
+            Strategy Analysis
+          </div>
+
+          {/* GRID */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))',
+              gap: 10
+            }}
+          >
+            {!signals_by_role || Object.keys(signals_by_role).length === 0 ? (
+              <div>No signals available</div>
+            ) : (
+              Object.entries(signals_by_role).map(([role, indicators]) => (
+                <RoleCard key={role} role={role} indicators={indicators} />
+              ))
+            )}
+          </div>
         </div>
       )}
-    </MainLayout>
+    </div>
   );
 }
 
