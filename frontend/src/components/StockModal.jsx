@@ -1,53 +1,130 @@
 import { X } from 'lucide-react';
-import { Line } from 'react-chartjs-2';
+import { useEffect, useState, useRef } from 'react';
 import {
-  Chart as ChartJS,
-  LineElement,
-  PointElement,
-  LinearScale,
-  CategoryScale,
-  Tooltip,
-  Legend
-} from 'chart.js';
-import { useEffect, useState } from 'react';
-
-ChartJS.register(
-  LineElement,
-  PointElement,
-  LinearScale,
-  CategoryScale,
-  Tooltip,
-  Legend
-);
+  createChart,
+  CandlestickSeries,
+  LineSeries,
+  HistogramSeries
+} from 'lightweight-charts';
 
 export default function StockModal({ stock, onClose }) {
-  const [chartData, setChartData] = useState(null);
+  const chartContainerRef = useRef(null);
+  const chartInstance = useRef(null);
+  const [tf, setTf] = useState('5m');
 
-  /* ---------------- FETCH CHART DATA ---------------- */
+  /* ---------- SUPPORT / RESISTANCE ---------- */
+  function drawSRLines(chart, data) {
+    if (!data || data.length < 10) return;
+
+    const highs = data.map((d) => d.high);
+    const lows = data.map((d) => d.low);
+
+    const resistance = Math.max(...highs.slice(-20));
+    const support = Math.min(...lows.slice(-20));
+
+    const resLine = chart.addSeries(LineSeries, {
+      color: '#ef4444',
+      lineWidth: 1,
+      lineStyle: 2
+    });
+
+    resLine.setData([
+      { time: data[0].time, value: resistance },
+      { time: data[data.length - 1].time, value: resistance }
+    ]);
+
+    const supLine = chart.addSeries(LineSeries, {
+      color: '#22c55e',
+      lineWidth: 1,
+      lineStyle: 2
+    });
+
+    supLine.setData([
+      { time: data[0].time, value: support },
+      { time: data[data.length - 1].time, value: support }
+    ]);
+  }
+
+  /* ---------- CHART ---------- */
   useEffect(() => {
     if (!stock) return;
 
-    fetch(`http://127.0.0.1:8000/history?symbol=${stock.symbol}`)
+    if (chartInstance.current) {
+      chartInstance.current.remove();
+    }
+
+    const chart = createChart(chartContainerRef.current, {
+      height: 300,
+      layout: {
+        background: { color: '#020617' },
+        textColor: '#94a3b8'
+      },
+      grid: {
+        vertLines: { color: '#1e293b' },
+        horzLines: { color: '#1e293b' }
+      },
+      timeScale: { timeVisible: true }
+    });
+
+    chartInstance.current = chart;
+
+    /* CANDLES */
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444'
+    });
+
+    /* VOLUME */
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: 'volume' },
+      priceScaleId: ''
+    });
+
+    chart.priceScale('').applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 }
+    });
+
+    /* INITIAL LOAD */
+    fetch(`http://127.0.0.1:8000/candles?symbol=${stock.symbol}&interval=${tf}`)
       .then((res) => res.json())
       .then((data) => {
-        setChartData({
-          labels: data.map((d) => d.time),
-          datasets: [
-            {
-              label: stock.symbol,
-              data: data.map((d) => d.price),
-              tension: 0.4,
+        candleSeries.setData(data);
 
-              borderColor: '#22c55e', // line color
-              backgroundColor: 'rgba(34,197,94,0.2)', // fill color
-              pointRadius: 0,
-              borderWidth: 2
-            }
-          ]
-        });
-      })
-      .catch(() => setChartData(null));
-  }, [stock]);
+        volumeSeries.setData(
+          data.map((d) => ({
+            time: d.time,
+            value: d.volume,
+            color: d.close > d.open ? '#22c55e' : '#ef4444'
+          }))
+        );
+
+        drawSRLines(chart, data);
+      });
+
+    /* LIVE STREAM */
+    const ws = new WebSocket(
+      `ws://127.0.0.1:8000/ws/candles/${stock.symbol}/${tf}`
+    );
+
+    ws.onmessage = (e) => {
+      const candle = JSON.parse(e.data);
+
+      candleSeries.update(candle);
+
+      volumeSeries.update({
+        time: candle.time,
+        value: candle.volume,
+        color: candle.close > candle.open ? '#22c55e' : '#ef4444'
+      });
+    };
+
+    return () => {
+      ws.close();
+      chart.remove();
+    };
+  }, [stock, tf]);
 
   if (!stock) return null;
 
@@ -58,88 +135,47 @@ export default function StockModal({ stock, onClose }) {
         ? '#ef4444'
         : '#94a3b8';
 
-  const trade =
-    stock.breakout === 'BREAKOUT' && stock.momentum > 70
-      ? 'BUY CALL'
-      : stock.breakout === 'BREAKDOWN' && stock.momentum > 70
-        ? 'BUY PUT'
-        : 'WATCH';
-
   return (
     <div style={overlay} onClick={onClose}>
-      <div style={modal} onClick={(e) => e.stopPropagation()}>
-        {/* HEADER */}
+      <div style={dialog} onClick={(e) => e.stopPropagation()}>
         <div style={header}>
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 'bold' }}>
-              {stock.symbol}
-            </div>
-            <div style={{ fontSize: 13, color: '#94a3b8' }}>{stock.sector}</div>
-          </div>
-
+          <div style={{ fontSize: 20, fontWeight: 700 }}>{stock.symbol}</div>
           <X size={22} style={{ cursor: 'pointer' }} onClick={onClose} />
         </div>
 
-        {/* PRICE */}
-        <div style={{ textAlign: 'center', margin: '18px 0' }}>
-          <div style={{ fontSize: 32, fontWeight: 'bold' }}>
-            ₹ {stock.price}
-          </div>
-
-          <div style={{ color: percentColor, fontWeight: 'bold' }}>
-            {stock.percentChange}% ({stock.priceChange})
-          </div>
-        </div>
-
-        {/* CHART */}
-        <div style={{ marginBottom: 20 }}>
-          {chartData ? (
-            <Line
-              data={chartData}
-              options={{
-                responsive: true,
-                plugins: { legend: { display: false } },
-
-                scales: {
-                  x: {
-                    ticks: { color: '#94a3b8' },
-                    grid: { color: '#1e293b' }
-                  },
-                  y: {
-                    ticks: { color: '#94a3b8' },
-                    grid: { color: '#1e293b' }
-                  }
-                }
-              }}
-            />
-          ) : (
-            <div style={{ textAlign: 'center', color: '#94a3b8' }}>
-              Loading chart...
+        <div style={body}>
+          <div style={{ textAlign: 'center', marginBottom: 18 }}>
+            <div style={{ fontSize: 30, fontWeight: 'bold' }}>
+              ₹ {stock.price}
             </div>
-          )}
-        </div>
+            <div style={{ color: percentColor, fontWeight: 600 }}>
+              {stock.percentChange}% ({stock.priceChange})
+            </div>
+          </div>
 
-        {/* INFO GRID */}
-        <div style={grid}>
-          <Info label="Breakout" value={stock.breakout} />
-          <Info label="Momentum" value={stock.momentum} />
-          <Info label="Strike" value={stock.optionStrike} />
-          <Info label="Trade" value={trade} />
-        </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            {['1m', '5m', '15m'].map((t) => (
+              <button
+                key={t}
+                onClick={() => setTf(t)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 6,
+                  border: '1px solid #334155',
+                  background: tf === t ? '#22c55e' : '#020617',
+                  color: tf === t ? 'black' : '#94a3b8',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
 
-        {/* ACTION */}
-        <button style={button}>Trade → {trade}</button>
+          <div ref={chartContainerRef} />
+        </div>
       </div>
-    </div>
-  );
-}
-
-/* ---------- small info box ---------- */
-function Info({ label, value }) {
-  return (
-    <div style={card}>
-      <div style={{ fontSize: 12, color: '#94a3b8' }}>{label}</div>
-      <div style={{ fontSize: 16, fontWeight: 'bold' }}>{value}</div>
     </div>
   );
 }
@@ -148,52 +184,34 @@ function Info({ label, value }) {
 
 const overlay = {
   position: 'fixed',
-  top: 0,
-  left: 0,
-  width: '100%',
-  height: '100%',
-  background: 'rgba(0,0,0,0.7)',
+  inset: 0,
+  background: 'rgba(0,0,0,0.75)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  zIndex: 999
+  zIndex: 999,
+  backdropFilter: 'blur(4px)'
 };
 
-const modal = {
+const dialog = {
+  width: 'min(720px, 92vw)',
   background: '#020617',
-  padding: 24,
-  borderRadius: 14,
-  width: 460,
-  border: '1px solid #334155'
+  borderRadius: 16,
+  border: '1px solid #334155',
+  display: 'flex',
+  flexDirection: 'column',
+  animation: 'scaleIn .18s ease'
 };
 
 const header = {
+  padding: '12px 16px',
+  borderBottom: '1px solid #334155',
   display: 'flex',
   justifyContent: 'space-between',
   alignItems: 'center'
 };
 
-const grid = {
-  display: 'grid',
-  gridTemplateColumns: '1fr 1fr',
-  gap: 12,
-  marginBottom: 18
-};
-
-const card = {
-  background: '#0f172a',
-  padding: 12,
-  borderRadius: 8,
-  textAlign: 'center'
-};
-
-const button = {
-  width: '100%',
-  padding: 14,
-  borderRadius: 10,
-  background: '#22c55e',
-  border: 'none',
-  fontWeight: 'bold',
-  cursor: 'pointer',
-  fontSize: 15
+const body = {
+  padding: '18px 20px',
+  overflowY: 'auto'
 };

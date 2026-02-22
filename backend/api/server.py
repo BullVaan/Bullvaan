@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
 import logging
-
+from datetime import datetime, timedelta
 from utils.nse_live import fetch_nse_indices
 
 
@@ -546,3 +546,35 @@ def get_history(symbol: str):
         {"time": str(i.time()), "price": float(row["Close"])}
         for i, row in df.iterrows()
     ] 
+
+@app.get("/candles")
+def get_candles(symbol: str, interval: str = "5m"):
+    import yfinance as yf
+
+    df = yf.download(
+        symbol + ".NS",
+        period="2d",
+        interval=interval
+    )
+
+    return [
+        {
+            "time": int((i + timedelta(hours=5, minutes=30)).timestamp()),
+            "open": float(r["Open"]),
+            "high": float(r["High"]),
+            "low": float(r["Low"]),
+            "close": float(r["Close"])
+        }
+        for i, r in df.iterrows()
+    ]    
+
+@app.websocket("/ws/candles/{symbol}/{interval}")
+async def ws_candles(websocket: WebSocket, symbol: str, interval: str):
+    await websocket.accept()
+    try:
+        while True:
+            candles = get_latest_candle(symbol, interval)  # your logic
+            await websocket.send_json(candles)
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        print("candle client disconnected")
