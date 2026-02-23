@@ -1,11 +1,20 @@
 import Sidebar from '../components/Sidebar';
+import { Outlet } from 'react-router-dom';
 
-export default function MainLayout({ children }) {
+export default function MainLayout() {
   return (
-    <div style={{ display: 'flex', overflow: 'hidden', maxWidth: '100vw' }}>
+    <div style={{ display: 'flex', maxWidth: '100vw' }}>
       <Sidebar />
-      <div style={{ flex: 1, background: '#020617', minHeight: '100vh', overflow: 'hidden' }}>
-        {children}
+
+      <div
+        style={{
+          flex: 1,
+          background: '#020617',
+          minHeight: '100vh',
+          padding: 20
+        }}
+      >
+        <Outlet />
       </div>
     </div>
   );

@@ -25,9 +25,11 @@ export default function RoleCard({ role, indicators }) {
     const votes = indicators.map((ind) => ind.signal);
     const buyCount = votes.filter((v) => v === 'BUY').length;
     const sellCount = votes.filter((v) => v === 'SELL').length;
+    const total = votes.length;
+    const majority = Math.ceil(total / 2);  // Need 2 out of 3, or 2 out of 2
 
-    if (buyCount > sellCount) return 'BUY';
-    if (sellCount > buyCount) return 'SELL';
+    if (buyCount >= majority) return 'BUY';
+    if (sellCount >= majority) return 'SELL';
     return 'NEUTRAL';
   };
 
@@ -64,9 +66,6 @@ export default function RoleCard({ role, indicators }) {
   return (
     <div
       style={{
-        width: '100%',
-        minWidth: 280,
-        maxWidth: 320,
         flex: 1,
         padding: 16,
         borderRadius: 12,

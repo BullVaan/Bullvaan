@@ -6,7 +6,8 @@ import {
   History,
   Settings,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Landmark
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -21,6 +22,11 @@ export default function Sidebar() {
       icon: <LayoutDashboard size={24} />
     },
     { name: 'Trades', path: '/trades', icon: <BarChart3 size={24} /> },
+    {
+      name: 'Stocks',
+      path: '/swing-trade',
+      icon: <Landmark size={24} />
+    },
     { name: 'History', path: '/history', icon: <History size={24} /> },
     { name: 'Settings', path: '/settings', icon: <Settings size={24} /> }
   ];
