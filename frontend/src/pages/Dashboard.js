@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import RoleCard from '../components/RoleCard';
 import OptionSuggestion from '../components/OptionSuggestion';
 import MarketTicker from '../components/MarketTicker';
-import MarketStatus from '../components/MarketStatus';
+import AppBar from '../components/AppBar';
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -111,37 +111,12 @@ function Dashboard() {
 
   return (
     <div style={{ width: '100%', overflow: 'hidden' }}>
-      <div
-        style={{
-          background: '#020617',
-          padding: 15,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          borderBottom: '1px solid #334155'
+      <AppBar
+        onLogout={() => {
+          localStorage.removeItem('auth');
+          navigate('/');
         }}
-      >
-        <div style={{ width: 80 }} />
-        <MarketStatus />
-
-        <button
-          onClick={() => {
-            localStorage.removeItem('auth');
-            navigate('/');
-          }}
-          style={{
-            padding: '8px 14px',
-            background: '#dc2626',
-            border: 'none',
-            color: 'white',
-            cursor: 'pointer',
-            borderRadius: 6,
-            flexShrink: 0
-          }}
-        >
-          Logout
-        </button>
-      </div>
+      />
 
       {/* MARKET STRIP */}
       <MarketTicker />

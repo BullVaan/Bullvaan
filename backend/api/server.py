@@ -164,6 +164,39 @@ def momentum_score(change_pct, volume, avg_volume):
     price_score = min(abs(change_pct), 5) * 10
     return round(vol_score + price_score)
 
+def volume_label(ratio):
+    if ratio > 2:
+        return "EXPLOSION"
+    elif ratio > 1.2:
+        return "SPIKE"
+    elif ratio >= 0.8:
+        return "NORMAL"
+    return "LOW"   
+
+def volume_trend(df):
+    try:
+        vols = df["Volume"].tail(3).tolist()
+
+        if len(vols) < 3:
+            return "→"
+
+        v1, v2, v3 = vols
+
+        # tolerance factor (10%)
+        tol = 0.9
+
+        # Mostly increasing
+        if v3 > v2 * tol and v2 > v1 * tol:
+            return "↑"
+
+        # Mostly decreasing
+        if v3 < v2 / tol and v2 < v1 / tol:
+            return "↓"
+
+        return "→"
+
+    except:
+        return "→"
 # =========================
 # ATM Strike Finder
 # =========================
@@ -214,7 +247,8 @@ def fetch_nifty50_movers():
                 prev_close = df["Close"].iloc[-2]
                 current = df["Close"].iloc[-1]
                 volume = int(df["Volume"].iloc[-1])
-                avg_vol = df["Volume"].mean()
+                avg_vol = df["Volume"].tail(5).mean()
+                volume_ratio = volume / avg_vol if avg_vol else 1
 
                 change_pct = ((current - prev_close) / prev_close) * 100
                 price_change = current - prev_close
@@ -233,6 +267,10 @@ def fetch_nifty50_movers():
                 "percentChange": round(float(change_pct), 2),
                 "priceChange": round(float(price_change), 2),   # ← ADD THIS
                 "volume": volume,
+                "avgVolume": int(avg_vol),
+                "volumeRatio": round(volume_ratio,2),
+                "volumeSignal": volume_label(volume_ratio),
+                "volumeTrend": volume_trend(df),
                 "sector": SECTOR_MAP.get(stock, "Other"),
                 "breakout": breakout,
                 "momentum": score,

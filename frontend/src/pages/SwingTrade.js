@@ -52,6 +52,19 @@ export default function SwingTrade() {
     return '#94a3b8';
   };
 
+  const volSignalColor = (sig) => {
+    if (sig === 'EXPLOSION') return '#22c55e';
+    if (sig === 'SPIKE') return '#3b82f6';
+    if (sig === 'NORMAL') return '#eab308';
+    return '#64748b';
+  };
+
+  const volTrendColor = (t) => {
+    if (t === '↑') return '#22c55e';
+    if (t === '↓') return '#ef4444';
+    return '#eab308';
+  };
+
   const badge = (type) => {
     if (type === 'BREAKOUT') return '🚀';
     if (type === 'BREAKDOWN') return '🔻';
@@ -69,6 +82,12 @@ export default function SwingTrade() {
     if (s.breakout === 'BREAKOUT' && s.momentum > 70) return 'BUY CALL';
     if (s.breakout === 'BREAKDOWN' && s.momentum > 70) return 'BUY PUT';
     return 'WATCH';
+  };
+
+  const volumeColor = (v) => {
+    if (v > 1.5) return '#22c55e'; // strong
+    if (v > 1) return '#3b82f6'; // above avg
+    return '#64748b'; // weak
   };
 
   /* ---------------- UI ---------------- */
@@ -131,6 +150,9 @@ export default function SwingTrade() {
                 ['Price'],
                 ['%', 'percentChange'],
                 ['Δ', 'priceChange'],
+                ['Vol', 'volumeRatio'],
+                ['VolSig'],
+                ['VolTrend'],
                 ['Sector'],
                 ['Signal'],
                 ['Momentum', 'momentum'],
@@ -181,6 +203,26 @@ export default function SwingTrade() {
 
                   <td style={{ ...td, color: percentColor(s.priceChange) }}>
                     {s.priceChange > 0 ? '+' : ''}₹{s.priceChange}
+                  </td>
+                  <td style={td}>{s.volumeRatio}x</td>
+
+                  <td
+                    style={{
+                      ...td,
+                      color: volSignalColor(s.volumeSignal),
+                      fontWeight: 'bold'
+                    }}
+                  >
+                    {s.volumeSignal}
+                  </td>
+                  <td
+                    style={{
+                      ...td,
+                      color: volTrendColor(s.volumeTrend),
+                      fontWeight: 'bold'
+                    }}
+                  >
+                    {s.volumeTrend}
                   </td>
 
                   <td style={td}>{s.sector}</td>
