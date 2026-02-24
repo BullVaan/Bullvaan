@@ -25,13 +25,43 @@ export default function RoleCard({ role, indicators }) {
     const votes = indicators.map((ind) => ind.signal);
     const buyCount = votes.filter((v) => v === 'BUY').length;
     const sellCount = votes.filter((v) => v === 'SELL').length;
+    const total = votes.length;
+    const majority = Math.ceil(total / 2);  // Need 2 out of 3, or 2 out of 2
 
-    if (buyCount > sellCount) return 'BUY';
-    if (sellCount > buyCount) return 'SELL';
+    if (buyCount >= majority) return 'BUY';
+    if (sellCount >= majority) return 'SELL';
     return 'NEUTRAL';
   };
 
   const consensus = getConsensus();
+
+  // Get background color based on consensus - solid colors with transparency
+  const getBackgroundColor = () => {
+    switch(consensus) {
+      case 'BUY':
+        return 'rgba(22, 163, 74, 0.15)';
+      case 'SELL':
+        return 'rgba(220, 38, 38, 0.15)';
+      case 'NEUTRAL':
+        return 'rgba(234, 179, 8, 0.15)';
+      default:
+        return style.bg;
+    }
+  };
+
+  // Get border color based on consensus
+  const getBorderColor = () => {
+    switch(consensus) {
+      case 'BUY':
+        return '#16a34a';
+      case 'SELL':
+        return '#dc2626';
+      case 'NEUTRAL':
+        return '#eab308';
+      default:
+        return style.border;
+    }
+  };
 
   return (
     <div
@@ -39,22 +69,18 @@ export default function RoleCard({ role, indicators }) {
         flex: 1,
         padding: 16,
         borderRadius: 12,
-        background: style.bg,
-        border: `2px solid ${style.border}`,
-        boxShadow: `0 0 15px rgba(59, 130, 246, 0.2)`,
-        transition: '0.3s'
+        background: getBackgroundColor(),
+        border: `2px solid ${getBorderColor()}`,
+        boxShadow: `0 0 20px ${colors[consensus]}40`,
+        transition: '0.4s'
       }}
     >
       {/* Role Header */}
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 15 }}>
-        <span style={{ fontSize: 20, marginRight: 8 }}>{style.label}</span>
-        <div>
-          <div style={{ fontSize: 14, color: '#94a3b8' }}>Role</div>
-          <div
-            style={{ fontSize: 16, fontWeight: 'bold', color: style.border }}
-          >
-            {role}
-          </div>
+      <div style={{ textAlign: 'center', marginBottom: 15 }}>
+        <div
+          style={{ fontSize: 18, fontWeight: 'bold', color: '#cbd5e1' }}
+        >
+          {role}
         </div>
       </div>
 

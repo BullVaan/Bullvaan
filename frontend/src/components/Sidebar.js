@@ -110,7 +110,7 @@ export default function Sidebar() {
       </div>
 
       {/* Menu */}
-      <div style={{ paddingTop: 10 }}>
+      <div style={{ paddingTop: 10, flex: 1 }}>
         {menu.map((item) => {
           const active = location.pathname === item.path;
 
@@ -145,6 +145,31 @@ export default function Sidebar() {
             </div>
           );
         })}
+      </div>
+
+      {/* Logout Button */}
+      <div
+        onClick={() => {
+          localStorage.removeItem('auth');
+          navigate('/');
+        }}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '14px 18px',
+          cursor: 'pointer',
+          background: 'transparent',
+          color: '#ef4444',
+          borderLeft: '4px solid transparent',
+          borderTop: '1px solid #334155',
+          transition: '0.2s'
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = '#0f172a')}
+        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+      >
+        <span style={{ fontSize: 24 }}>🚪</span>
+        {open && <span style={{ fontSize: 18 }}>Logout</span>}
       </div>
     </div>
   );
