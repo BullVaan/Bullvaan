@@ -137,13 +137,23 @@ export default function SwingTrade() {
       <div
         style={{
           borderRadius: 14,
-          overflow: 'hidden',
-          border: '1px solid #334155'
+          border: '1px solid #334155',
+          background: '#020617',
+          maxHeight: 480,
+          overflow: 'auto',
+          marginBottom: 24
         }}
       >
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           {/* HEADER */}
-          <thead style={{ background: '#020617', position: 'sticky', top: 0 }}>
+          <thead
+            style={{
+              background: '#020617',
+              position: 'sticky',
+              top: 0,
+              zIndex: 2
+            }}
+          >
             <tr>
               {[
                 ['Symbol'],
@@ -167,7 +177,11 @@ export default function SwingTrade() {
                     fontSize: 13,
                     cursor: key ? 'pointer' : 'default',
                     color: '#94a3b8',
-                    borderBottom: '1px solid #334155'
+                    borderBottom: '1px solid #334155',
+                    background: '#020617',
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 2
                   }}
                 >
                   {label}
