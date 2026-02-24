@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
@@ -991,3 +991,114 @@ async def ws_candles(websocket: WebSocket, symbol: str, interval: str):
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         print("candle client disconnected")
+
+
+# =========================
+# Trades: Manual Trade Log
+# =========================
+TRADES_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'trades.json')
+
+def _ensure_trades_file():
+    """Create trades file and directory if they don't exist"""
+    os.makedirs(os.path.dirname(TRADES_FILE), exist_ok=True)
+    if not os.path.exists(TRADES_FILE):
+        with open(TRADES_FILE, 'w') as f:
+            json.dump([], f)
+
+def _load_trades():
+    _ensure_trades_file()
+    with open(TRADES_FILE, 'r') as f:
+        return json.load(f)
+
+def _save_trades(trades):
+    _ensure_trades_file()
+    with open(TRADES_FILE, 'w') as f:
+        json.dump(trades, f, indent=2)
+
+@app.get("/trades/active")
+def get_active_trades():
+    """Get all open (bought but not yet sold) trades"""
+    trades = _load_trades()
+    open_trades = [t for t in trades if t.get('status') == 'open']
+    return {"trades": open_trades}
+
+@app.get("/trades")
+def get_trades(date: str = None):
+    """
+    Get trades. If date is provided (YYYY-MM-DD), filter by that date.
+    Defaults to today (IST).
+    """
+    trades = _load_trades()
+    if date is None:
+        # Default to today IST
+        date = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-%d')
+    filtered = [t for t in trades if t.get('date') == date]
+    # Calculate day P&L
+    total_pnl = sum(t.get('pnl', 0) for t in filtered)
+    return {
+        "date": date,
+        "total_pnl": round(total_pnl, 2),
+        "trade_count": len(filtered),
+        "trades": filtered
+    }
+
+@app.post("/trades")
+def add_trade(trade: dict = Body(...)):
+    """
+    Add a new trade. Expected fields:
+    - name: str (option name e.g. "NIFTY 25700 CE")
+    - lot: int
+    - buy_price: float
+    - sell_price: float (optional, 0 if still open)
+    - buy_time: str (HH:MM IST)
+    - sell_time: str (HH:MM IST, optional)
+    """
+    trades = _load_trades()
+    ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+    buy_price = float(trade.get('buy_price', 0))
+    sell_price = float(trade.get('sell_price', 0))
+    lot = int(trade.get('lot', 1))
+    quantity = int(trade.get('quantity', lot))
+
+    new_trade = {
+        "id": int(ist_now.timestamp() * 1000),
+        "date": ist_now.strftime('%Y-%m-%d'),
+        "name": trade.get('name', ''),
+        "lot": lot,
+        "quantity": quantity,
+        "buy_price": buy_price,
+        "sell_price": sell_price,
+        "buy_time": trade.get('buy_time') or ist_now.strftime('%H:%M'),
+        "sell_time": trade.get('sell_time', ''),
+        "pnl": round((sell_price - buy_price) * quantity, 2) if sell_price else 0,
+        "status": "closed" if sell_price else "open"
+    }
+    trades.append(new_trade)
+    _save_trades(trades)
+    return new_trade
+
+@app.put("/trades/{trade_id}")
+def update_trade(trade_id: int, trade: dict = Body(...)):
+    """Update a trade (e.g. close it with sell_price and sell_time)"""
+    trades = _load_trades()
+    for t in trades:
+        if t['id'] == trade_id:
+            for key, val in trade.items():
+                t[key] = val
+            # Recalculate P&L
+            if t.get('sell_price'):
+                qty = int(t.get('quantity', t['lot']))
+                t['pnl'] = round((float(t['sell_price']) - float(t['buy_price'])) * qty, 2)
+                t['status'] = 'closed'
+            _save_trades(trades)
+            return t
+    return {"error": "Trade not found"}
+
+@app.delete("/trades/{trade_id}")
+def delete_trade(trade_id: int):
+    """Delete a trade by ID"""
+    trades = _load_trades()
+    trades = [t for t in trades if t['id'] != trade_id]
+    _save_trades(trades)
+    return {"status": "deleted"}
