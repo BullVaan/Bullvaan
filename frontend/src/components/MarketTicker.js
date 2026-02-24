@@ -1,12 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 
-// Marquee animation CSS
-const marqueeStyles = `
-@keyframes marquee {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
-}
-`;
+
 
 function MarketTicker() {
   const [ticker, setTicker] = useState([]);
@@ -49,16 +43,12 @@ function MarketTicker() {
     };
   }, []);
 
-  // Duplicate ticker data for seamless loop
-  const tickerItems = [...ticker, ...ticker];
 
   return (
     <>
-      <style>{marqueeStyles}</style>
       <div
         style={{
           overflow: 'hidden',
-          overflowX: 'hidden',
           maxWidth: '100vw',
           background: '#0f172a',
           borderBottom: '1px solid #1e293b',
@@ -67,7 +57,7 @@ function MarketTicker() {
         }}
       >
 
-        {/* Connection indicator with background mask */}
+        {/* Connection indicator */}
         <div
           style={{
             position: 'absolute',
@@ -100,16 +90,16 @@ function MarketTicker() {
             Connecting to NSE...
           </div>
         ) : (
-          /* Scrolling marquee container */
+          /* Static ticker — no scrolling */
           <div
             style={{
               display: 'flex',
-              animation: 'marquee 20s linear infinite',
-              width: 'fit-content',
+              justifyContent: 'center',
+              gap: 20,
               paddingLeft: 25,
             }}
           >
-            {tickerItems.map((item, idx) => {
+            {ticker.map((item, idx) => {
               const up = item.change >= 0;
               const color =
                 item.price == null ? '#64748b' : up ? '#22c55e' : '#ef4444';

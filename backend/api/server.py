@@ -3,8 +3,104 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
 import logging
+import os
+import threading
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+from kiteconnect import KiteConnect, KiteTicker
 from utils.nse_live import fetch_nse_indices
+
+# Load environment variables
+load_dotenv()
+
+# Initialize Zerodha Kite Connect
+api_key = os.getenv("API_KEY")
+access_token = os.getenv("ACCESS_TOKEN")
+kite = KiteConnect(api_key=api_key)
+kite.set_access_token(access_token)
+
+# =========================
+# KiteTicker: Real-time tick store
+# =========================
+# Shared dict: instrument_token -> tick data (updated by KiteTicker thread)
+_tick_store = {}
+# Map instrument_token -> symbol info for reverse lookup
+_token_map = {}
+# List of asyncio Events to notify WebSocket consumers on new ticks
+_tick_listeners = []
+_kws = None
+
+def _on_ticks(ws, ticks):
+    """Called by KiteTicker on every tick — runs in Twisted thread"""
+    for tick in ticks:
+        token = tick["instrument_token"]
+        _tick_store[token] = tick
+    # Notify all async listeners
+    for evt in list(_tick_listeners):
+        evt.set()
+
+def _on_connect(ws, response):
+    """Called when KiteTicker connects"""
+    tokens = list(_token_map.keys())
+    if tokens:
+        ws.subscribe(tokens)
+        ws.set_mode(ws.MODE_QUOTE, tokens)
+        logging.getLogger("api.server").info(f"KiteTicker subscribed to {len(tokens)} tokens")
+
+def _on_close(ws, code, reason):
+    logging.getLogger("api.server").warning(f"KiteTicker closed: {code} - {reason}")
+
+def _on_error(ws, code, reason):
+    logging.getLogger("api.server").error(f"KiteTicker error: {code} - {reason}")
+
+def start_ticker(subscribe_tokens):
+    """Start KiteTicker in a background thread. subscribe_tokens = {token: info_dict}"""
+    global _kws
+    _token_map.update(subscribe_tokens)
+
+    if _kws is not None:
+        # Already running — just subscribe new tokens
+        new_tokens = list(subscribe_tokens.keys())
+        if new_tokens:
+            try:
+                _kws.subscribe(new_tokens)
+                _kws.set_mode(_kws.MODE_QUOTE, new_tokens)
+            except Exception:
+                pass
+        return
+
+    _kws = KiteTicker(api_key, access_token)
+    _kws.on_ticks = _on_ticks
+    _kws.on_connect = _on_connect
+    _kws.on_close = _on_close
+    _kws.on_error = _on_error
+    _kws.connect(threaded=True)
+
+def get_tick(token):
+    """Get latest tick for an instrument token"""
+    return _tick_store.get(token)
+
+def _get_spot_token(zerodha_symbol):
+    """Get the INDEX_TOKENS instrument_token for a given zerodha symbol"""
+    cfg = SYMBOL_CONFIG.get(zerodha_symbol, SYMBOL_CONFIG["NIFTY"])
+    spot_key = cfg["spot"]
+    for token, info in INDEX_TOKENS.items():
+        if info["key"] == spot_key:
+            return token
+    return None
+
+async def wait_for_tick(timeout=2):
+    """Async wait until a new tick arrives (thread-safe)"""
+    evt = threading.Event()
+    _tick_listeners.append(evt)
+    try:
+        loop = asyncio.get_event_loop()
+        await asyncio.wait_for(loop.run_in_executor(None, evt.wait), timeout=timeout)
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        if evt in _tick_listeners:
+            _tick_listeners.remove(evt)
 
 
 # strategies
@@ -46,8 +142,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # =========================
+# Index instrument tokens for KiteTicker
+# =========================
+INDEX_TOKENS = {}  # Will be populated at startup: {token: {name, key}}
+
+@app.on_event("startup")
+def startup_init_ticker():
+    """Resolve index instrument tokens and start KiteTicker"""
+    indices_to_track = [
+        {"exchange": "NSE", "tradingsymbol": "NIFTY 50", "name": "Nifty 50"},
+        {"exchange": "NSE", "tradingsymbol": "NIFTY BANK", "name": "Bank Nifty"},
+        {"exchange": "BSE", "tradingsymbol": "SENSEX", "name": "Sensex"},
+    ]
+    subscribe = {}
+    for idx in indices_to_track:
+        try:
+            ltp_key = f"{idx['exchange']}:{idx['tradingsymbol']}"
+            quote = kite.quote(ltp_key)
+            token = quote[ltp_key].get("instrument_token")
+            if token:
+                subscribe[token] = {"name": idx["name"], "key": ltp_key}
+                INDEX_TOKENS[token] = {"name": idx["name"], "key": ltp_key}
+                logger.info(f"Index {idx['name']} -> token {token}")
+            else:
+                logger.warning(f"No instrument_token in quote for {ltp_key}: {quote[ltp_key]}")
+        except Exception as e:
+            logger.warning(f"Could not resolve token for {idx['tradingsymbol']}: {e}")
+
+    if subscribe:
+        start_ticker(subscribe)
+        logger.info(f"KiteTicker started with {len(subscribe)} index tokens")
+
+
+
 # Supported Indices
 # =========================
 SUPPORTED_INDICES = {
@@ -123,11 +251,11 @@ def fetch_india_vix():
         
         if vix_data is not None and not vix_data.empty:
             # Current price = today's latest close
-            current_vix = float(vix_data['Close'].iloc[-1])
+            current_vix = float(vix_data['Close'].iloc[-1].item())
             
             # Previous close = yesterday's close
             if len(vix_data) > 1:
-                prev_close_vix = float(vix_data['Close'].iloc[-2])
+                prev_close_vix = float(vix_data['Close'].iloc[-2].item())
             else:
                 prev_close_vix = current_vix
             
@@ -434,6 +562,94 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
 
 
 # =========================
+# Zerodha Options Chain - February Expiry
+# =========================
+@app.get("/options")
+def get_options(symbol: str = "NIFTY", strike: int = None):
+    """
+    Fetch live option prices from Zerodha for current month expiry
+    symbol: NIFTY or BANKNIFTY
+    strike: ATM strike price (optional, will calculate if not provided)
+    """
+    try:
+        # Map symbols
+        zerodha_symbol = SYMBOL_MAP.get(symbol, "NIFTY")
+        
+        # Use cached near-expiry options
+        feb_options, nearest_expiry = get_near_expiry_options(zerodha_symbol)
+        
+        if not feb_options:
+            return {"error": "No options found", "symbol": zerodha_symbol}
+        
+        expiry_date = str(nearest_expiry)
+        cfg = SYMBOL_CONFIG.get(zerodha_symbol, SYMBOL_CONFIG["NIFTY"])
+        
+        # If no strike provided, calculate ATM from current price
+        if strike is None:
+            ltp_data = kite.ltp(cfg["spot"])
+            spot_price = ltp_data[cfg["spot"]]["last_price"]
+            
+            interval = cfg["interval"]
+            strike = round(spot_price / interval) * interval
+        
+        # Find ATM, OTM CE and PE options
+        atm_ce = next((i for i in feb_options if i['strike'] == strike and i['instrument_type'] == 'CE'), None)
+        atm_pe = next((i for i in feb_options if i['strike'] == strike and i['instrument_type'] == 'PE'), None)
+        otm_ce = next((i for i in feb_options if i['strike'] == strike + cfg["interval"] and i['instrument_type'] == 'CE'), None)
+        otm_pe = next((i for i in feb_options if i['strike'] == strike - cfg["interval"] and i['instrument_type'] == 'PE'), None)
+        
+        # Get live prices for these options
+        exchange_prefix = cfg["exchange"]
+        option_tokens = []
+        option_map = {}
+        
+        for opt, label in [(atm_ce, 'atm_ce'), (atm_pe, 'atm_pe'), (otm_ce, 'otm_ce'), (otm_pe, 'otm_pe')]:
+            if opt:
+                token = f"{exchange_prefix}:{opt['tradingsymbol']}"
+                option_tokens.append(token)
+                option_map[token] = {
+                    "label": label,
+                    "strike": opt['strike'],
+                    "type": opt['instrument_type'],
+                    "symbol": opt['tradingsymbol']
+                }
+        
+        # Fetch LTP for all options
+        if option_tokens:
+            ltp_data = kite.ltp(option_tokens)
+        else:
+            ltp_data = {}
+        
+        # Build response
+        options_data = []
+        for token, info in option_map.items():
+            price_info = ltp_data.get(token, {})
+            options_data.append({
+                "label": info["label"],
+                "strike": info["strike"],
+                "type": info["type"],
+                "symbol": info["symbol"],
+                "ltp": price_info.get("last_price", 0),
+                "token": token
+            })
+        
+        return {
+            "symbol": zerodha_symbol,
+            "expiry": expiry_date,
+            "atm_strike": strike,
+            "options": options_data,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Options fetch error: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "symbol": symbol
+        }
+
+
+# =========================
 # Available Indices Route
 # =========================
 @app.get("/indices")
@@ -476,24 +692,221 @@ def get_ticker():
 
 
 # =========================
-# WebSocket: Real-time Ticker
+# Near-expiry options cache (per symbol, loaded once per day)
 # =========================
+# Symbol config: zerodha name, exchange, spot key, strike interval
+SYMBOL_CONFIG = {
+    "NIFTY": {"exchange": "NFO", "spot": "NSE:NIFTY 50", "interval": 50},
+    "BANKNIFTY": {"exchange": "NFO", "spot": "NSE:NIFTY BANK", "interval": 100},
+    "SENSEX": {"exchange": "BFO", "spot": "BSE:SENSEX", "interval": 100},
+}
+
+SYMBOL_MAP = {
+    "^NSEI": "NIFTY", "NIFTY": "NIFTY",
+    "^NSEBANK": "BANKNIFTY", "BANKNIFTY": "BANKNIFTY",
+    "^BSESN": "SENSEX", "SENSEX": "SENSEX",
+}
+
+_near_expiry_cache = {}
+
+def get_near_expiry_options(zerodha_symbol):
+    """Return cached near-expiry options for a symbol, refresh once per day"""
+    today = datetime.now().date()
+    cached = _near_expiry_cache.get(zerodha_symbol)
+    if cached and cached["date"] == today:
+        return cached["options"], cached["expiry"]
+
+    cfg = SYMBOL_CONFIG.get(zerodha_symbol, SYMBOL_CONFIG["NIFTY"])
+    instruments = kite.instruments(cfg["exchange"])
+    all_opts = [
+        i for i in instruments
+        if i['name'] == zerodha_symbol
+        and i['instrument_type'] in ['CE', 'PE']
+        and i['expiry'] >= today
+    ]
+    expiries = sorted(set(i['expiry'] for i in all_opts))
+    if not expiries:
+        return [], None
+    nearest = expiries[0]
+    near_opts = [i for i in all_opts if i['expiry'] == nearest]
+    _near_expiry_cache[zerodha_symbol] = {"options": near_opts, "expiry": nearest, "date": today}
+    logger.info(f"Cached {len(near_opts)} near-expiry options for {zerodha_symbol} (exp: {nearest})")
+    return near_opts, nearest
+
+# =========================
+# WebSocket: Live Options Prices
+# =========================
+@app.websocket("/ws/options")
+async def ws_options(websocket: WebSocket):
+    """
+    Streams live option prices (ATM/OTM CE & PE) via KiteTicker — real-time.
+    Client sends: {"symbol": "^NSEI"} to subscribe
+    """
+    await websocket.accept()
+    try:
+        # Wait for client to send symbol
+        msg = await websocket.receive_text()
+        params = json.loads(msg)
+        symbol = params.get("symbol", "^NSEI")
+
+        zerodha_symbol = SYMBOL_MAP.get(symbol, "NIFTY")
+        expiry_options, nearest_expiry = get_near_expiry_options(zerodha_symbol)
+        cfg = SYMBOL_CONFIG.get(zerodha_symbol, SYMBOL_CONFIG["NIFTY"])
+
+        # Track option tokens currently subscribed to KiteTicker
+        option_tokens = {}  # {instrument_token: {label, strike, type}}
+        last_strike = None
+
+        while True:
+            try:
+                # Check if client sent a new symbol (non-blocking)
+                try:
+                    new_msg = await asyncio.wait_for(websocket.receive_text(), timeout=0.01)
+                    new_params = json.loads(new_msg)
+                    new_symbol = new_params.get("symbol", symbol)
+                    if new_symbol != symbol:
+                        symbol = new_symbol
+                        zerodha_symbol = SYMBOL_MAP.get(symbol, "NIFTY")
+                        expiry_options, nearest_expiry = get_near_expiry_options(zerodha_symbol)
+                        cfg = SYMBOL_CONFIG.get(zerodha_symbol, SYMBOL_CONFIG["NIFTY"])
+                        option_tokens = {}
+                        last_strike = None
+                except asyncio.TimeoutError:
+                    pass
+
+                if not expiry_options:
+                    await websocket.send_text(json.dumps({"error": "No options found"}))
+                    await wait_for_tick(timeout=1)
+                    continue
+
+                # Get spot price from KiteTicker tick store
+                spot_token = _get_spot_token(zerodha_symbol)
+                if not spot_token:
+                    await websocket.send_text(json.dumps({"error": "Spot token not resolved"}))
+                    await wait_for_tick(timeout=1)
+                    continue
+
+                spot_tick = get_tick(spot_token)
+                if not spot_tick:
+                    await websocket.send_text(json.dumps({"error": "Waiting for spot price..."}))
+                    await wait_for_tick(timeout=1)
+                    continue
+
+                spot = spot_tick["last_price"]
+                interval = cfg["interval"]
+                strike = round(spot / interval) * interval
+
+                # If ATM strike changed, subscribe new option instrument tokens
+                if strike != last_strike:
+                    last_strike = strike
+                    option_tokens = {}
+
+                    atm_ce = next((i for i in expiry_options if i['strike'] == strike and i['instrument_type'] == 'CE'), None)
+                    atm_pe = next((i for i in expiry_options if i['strike'] == strike and i['instrument_type'] == 'PE'), None)
+                    otm_ce = next((i for i in expiry_options if i['strike'] == strike + interval and i['instrument_type'] == 'CE'), None)
+                    otm_pe = next((i for i in expiry_options if i['strike'] == strike - interval and i['instrument_type'] == 'PE'), None)
+
+                    subscribe = {}
+                    for opt, label in [(atm_ce, 'atm_ce'), (atm_pe, 'atm_pe'), (otm_ce, 'otm_ce'), (otm_pe, 'otm_pe')]:
+                        if opt:
+                            tok = opt['instrument_token']
+                            option_tokens[tok] = {"label": label, "strike": opt['strike'], "type": opt['instrument_type']}
+                            subscribe[tok] = {"name": opt['tradingsymbol'], "key": f"{cfg['exchange']}:{opt['tradingsymbol']}"}
+
+                    if subscribe:
+                        start_ticker(subscribe)
+                        logger.info(f"Subscribed {len(subscribe)} option tokens for {zerodha_symbol} strike {strike}")
+
+                # Build response from tick store
+                options_list = []
+                for tok, info in option_tokens.items():
+                    tick = get_tick(tok)
+                    ltp = tick["last_price"] if tick else 0
+                    options_list.append({
+                        "label": info["label"],
+                        "strike": info["strike"],
+                        "type": info["type"],
+                        "ltp": ltp
+                    })
+
+                await websocket.send_text(json.dumps({
+                    "symbol": zerodha_symbol,
+                    "expiry": str(nearest_expiry),
+                    "atm_strike": strike,
+                    "options": options_list,
+                    "timestamp": datetime.now().isoformat()
+                }))
+
+            except (WebSocketDisconnect, asyncio.CancelledError):
+                break
+            except Exception as e:
+                if 'close' in str(e).lower() or any(c in str(e) for c in ['1001', '1005', '1012']):
+                    break
+                logger.error(f"Options WS tick error: {e}")
+
+            # Wait for next tick (real-time, no polling delay)
+            await wait_for_tick(timeout=1)
+
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        pass
+    except Exception as e:
+        logger.error(f"Options WS error: {e}", exc_info=True)
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+# =========================
+# WebSocket: Real-time Ticker (KiteTicker)
+# =========================
+TICKER_INSTRUMENTS = [
+    {"key": "NSE:NIFTY 50", "name": "Nifty 50"},
+    {"key": "NSE:NIFTY BANK", "name": "Bank Nifty"},
+    {"key": "BSE:SENSEX", "name": "Sensex"},
+]
+
 @app.websocket("/ws/ticker")
 async def ws_ticker(websocket: WebSocket):
     """
-    Streams real-time NSE index prices to the frontend
-    Updates every 2 seconds during market hours
+    Streams live index prices from KiteTicker tick store — real-time, no polling.
     """
     await websocket.accept()
     try:
         while True:
-            data = fetch_nse_indices()
-            await websocket.send_text(json.dumps(data))
-            await asyncio.sleep(2)  # push every 2 seconds
-    except WebSocketDisconnect:
+            result = []
+            for token, info in INDEX_TOKENS.items():
+                tick = get_tick(token)
+                if tick:
+                    price = tick.get("last_price")
+                    prev = tick.get("ohlc", {}).get("close")
+                    if price and prev:
+                        change = round(price - prev, 2)
+                        change_pct = round((change / prev) * 100, 2)
+                    else:
+                        change = None
+                        change_pct = None
+                    result.append({
+                        "symbol": info["key"],
+                        "name": info["name"],
+                        "price": round(price, 2) if price else None,
+                        "change": change,
+                        "change_pct": change_pct,
+                    })
+            if result:
+                await websocket.send_text(json.dumps(result))
+            # Wait for next tick (real-time, no polling delay)
+            await wait_for_tick(timeout=2)
+    except (WebSocketDisconnect, asyncio.CancelledError):
         pass
-    except Exception:
-        pass
+    except Exception as e:
+        if not ('close' in str(e).lower() or any(c in str(e) for c in ['1001', '1005', '1012'])):
+            logger.error(f"Ticker WS error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
   
 @app.websocket("/ws/nifty50")
 async def ws_nifty50(websocket: WebSocket):

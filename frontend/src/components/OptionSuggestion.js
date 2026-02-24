@@ -1,213 +1,330 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export default function OptionSuggestion({ signal, price, symbol }) {
-  const [selectedExpiry, setSelectedExpiry] = useState('weekly');
+  const [options, setOptions] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [connected, setConnected] = useState(false);
+  const wsRef = useRef(null);
 
   const symbolConfig = {
-    '^NSEI': { name: 'NIFTY 50', interval: 100, expiryDays: [3, 10, 17] },
-    '^NSEBANK': { name: 'BANK NIFTY', interval: 100, expiryDays: [2, 9, 16] },
-    '^BSESN': { name: 'SENSEX', interval: 100, expiryDays: [3, 10, 17] }
+    '^NSEI': { name: 'NIFTY 50' },
+    '^NSEBANK': { name: 'BANK NIFTY' },
+    '^BSESN': { name: 'SENSEX' }
   };
-
-  const config = symbolConfig[symbol] || {
-    name: symbol,
-    interval: 100,
-    expiryDays: [7]
-  };
-
-  // Calculate strikes
-  const roundToInterval = (num, interval) =>
-    Math.round(num / interval) * interval;
-  const atmStrike = roundToInterval(price, config.interval);
-  const otmCall = atmStrike + config.interval; // Higher call = OTM
-  const otmPut = atmStrike - config.interval; // Lower put = OTM
-
-  // Get today's date for calculating expiry
-  const today = new Date();
-  const getExpiryDate = (daysAhead) => {
-    const date = new Date(today);
-    date.setDate(date.getDate() + daysAhead);
-    return date.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
-  };
-
-  // Determine recommended option based on signal
-  const getRecommendation = () => {
-    if (signal === 'BUY') {
-      return {
-        type: 'CALL',
-        atm: `${atmStrike} CE`,
-        otm: `${otmCall} CE`,
-        logic: 'Bullish: Buy CALL options',
-        riskNote: 'OTM = Lower premium, higher leverage',
-        suggested: `${atmStrike} CE`
-      };
-    } else if (signal === 'SELL') {
-      return {
-        type: 'PUT',
-        atm: `${atmStrike} PE`,
-        otm: `${otmPut} PE`,
-        logic: 'Bearish: Buy PUT options',
-        riskNote: 'OTM = Lower premium, higher leverage',
-        suggested: `${atmStrike} PE`
-      };
-    } else {
-      return {
-        type: 'WAIT',
-        atm: '—',
-        otm: '—',
-        logic: 'Neutral: Wait for clearer signal',
-        riskNote: 'No clear direction',
-        suggested: 'HOLD'
-      };
-    }
-  };
-
-  const recommendation = getRecommendation();
-  const expiryDate = getExpiryDate(
-    config.expiryDays[
-      selectedExpiry === 'weekly' ? 0 : selectedExpiry === 'monthly' ? 1 : 2
-    ] || 7
-  );
+  const config = symbolConfig[symbol] || { name: symbol };
 
   const signalColor = {
-    BUY: '#16a34a',
-    SELL: '#dc2626',
+    BUY: '#22c55e',
+    SELL: '#ef4444',
+    NEUTRAL: '#eab308',
     WAIT: '#eab308'
   };
 
+  // WebSocket — open once, send new symbol on change
+  useEffect(() => {
+    let reconnectTimer;
+
+    const connect = () => {
+      const ws = new WebSocket('ws://127.0.0.1:8000/ws/options');
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ symbol }));
+        setConnected(true);
+        setError('');
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.error) {
+          setError(data.error);
+        } else {
+          setOptions(data);
+          setError('');
+        }
+        setLoading(false);
+      };
+
+      ws.onerror = () => {
+        setConnected(false);
+      };
+
+      ws.onclose = () => {
+        setConnected(false);
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      clearTimeout(reconnectTimer);
+      if (wsRef.current) {
+        wsRef.current.onclose = null; // prevent auto-reconnect on unmount
+        wsRef.current.close();
+      }
+    };
+  }, []);
+
+  // Send new symbol when index changes (reuse existing connection)
+  useEffect(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      setLoading(true);
+      wsRef.current.send(JSON.stringify({ symbol }));
+    }
+  }, [symbol]);
+
+  // Filter options based on signal
+  const getFilteredOptions = () => {
+    if (!options?.options) return { atm: null, otm: null, atm2: null, otm2: null };
+    if (signal === 'NEUTRAL') {
+      // Show both CE and PE for NEUTRAL
+      const atmCe = options.options.find((o) => o.label === 'atm_ce');
+      const atmPe = options.options.find((o) => o.label === 'atm_pe');
+      return { atm: atmCe, otm: atmPe, atm2: null, otm2: null };
+    }
+    const type = signal === 'BUY' ? 'CE' : 'PE';
+    const atm = options.options.find(
+      (o) => o.label.startsWith('atm') && o.type === type
+    );
+    const otm = options.options.find(
+      (o) => o.label.startsWith('otm') && o.type === type
+    );
+    return { atm, otm, atm2: null, otm2: null };
+  };
+
+  const { atm, otm } = getFilteredOptions();
+
+  // Determine best option (ATM for safer trade)
+  const best = atm;
+
+  const formatExpiry = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
+  };
+
   return (
-    <div
-      style={{
-        background: '#020617',
-        border: '2px solid #334155',
-        borderRadius: 10,
-        padding: 18,
-        marginBottom: 18,
-        maxWidth: 860
-      }}
-    >
-      {/* HEADER ROW */}
+    <div style={containerStyle}>
+      {/* HEADER */}
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          marginBottom: 12,
-          flexWrap: 'wrap',
-          gap: 10
+          marginBottom: 10,
+          borderBottom: '1px solid #1e293b',
+          paddingBottom: 8
         }}
       >
-        {/* Signal */}
-        <div>
-          <div style={{ fontSize: 11, color: '#64748b' }}>Signal</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: '#64748b', letterSpacing: 1 }}>
+            Signal
+          </div>
           <div
             style={{
               fontSize: 20,
-              fontWeight: 700,
-              color: signalColor[recommendation.type]
+              fontWeight: 'bold',
+              color: signalColor[signal] || '#eab308'
             }}
           >
             {signal}
           </div>
         </div>
 
-        {/* Expiry */}
-        <select
-          value={selectedExpiry}
-          onChange={(e) => setSelectedExpiry(e.target.value)}
-          style={selectStyle}
-        >
-          <option value="weekly">
-            Weekly ({getExpiryDate(config.expiryDays[0])})
-          </option>
-          <option value="monthly">
-            Monthly ({getExpiryDate(config.expiryDays[1])})
-          </option>
-          <option value="next">
-            Next ({getExpiryDate(config.expiryDays[2])})
-          </option>
-        </select>
+        <div style={{ flex: 1, textAlign: 'center' }}>
+          <div style={{ fontSize: 11, color: '#64748b' }}>Expiry</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#f59e0b' }}>
+            {options ? formatExpiry(options.expiry) : '—'}
+          </div>
+        </div>
 
-        {/* Price */}
-        <div style={{ textAlign: 'right' }}>
+        <div style={{ flex: 1, textAlign: 'right' }}>
           <div style={{ fontSize: 11, color: '#64748b' }}>{config.name}</div>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>
             ₹{Math.round(price)}
           </div>
         </div>
       </div>
 
-      {/* OPTION BOXES */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'center',
-          gap: 8,
-          marginBottom: 10,
-          flexWrap: 'wrap'
-        }}
-      >
-        <MiniCard title="ATM" value={recommendation.atm} color="#3b82f6" />
-        <MiniCard title="OTM" value={recommendation.otm} color="#a855f7" />
-        <MiniCard
-          title="BEST"
-          value={recommendation.suggested}
-          color="#10b981"
-          highlight
-        />
-      </div>
+      {/* LIVE OPTIONS */}
+      {loading ? (
+        <div style={{ textAlign: 'center', color: '#64748b', padding: 20 }}>
+          Loading live options...
+        </div>
+      ) : error ? (
+        <div style={{ textAlign: 'center', color: '#ef4444', padding: 20 }}>
+          {error}
+        </div>
+      ) : (
+        <>
+          {/* ATM & OTM Rows */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {atm && (
+              <OptionRow
+                label={signal === 'NEUTRAL' ? 'CE' : 'ATM'}
+                strike={atm.strike}
+                type={atm.type}
+                ltp={atm.ltp}
+                color={signal === 'NEUTRAL' ? '#3b82f6' : '#3b82f6'}
+              />
+            )}
+            {otm && (
+              <OptionRow
+                label={signal === 'NEUTRAL' ? 'PE' : 'OTM'}
+                strike={otm.strike}
+                type={otm.type}
+                ltp={otm.ltp}
+                color={signal === 'NEUTRAL' ? '#ef4444' : '#a855f7'}
+              />
+            )}
+          </div>
 
-      {/* BUY BUTTON CENTER */}
-      <div style={{ textAlign: 'center' }}>
-        {recommendation.type !== 'WAIT' ? (
-          <button
+          {/* RECOMMENDED / BEST — only for BUY or SELL */}
+          {best && signal !== 'NEUTRAL' && (
+            <div
+              style={{
+                marginTop: 8,
+                padding: '6px 10px',
+                background:
+                  signal === 'BUY'
+                    ? 'rgba(34, 197, 94, 0.08)'
+                    : 'rgba(239, 68, 68, 0.08)',
+                border: `2px solid ${signalColor[signal]}`,
+                borderRadius: 8,
+                textAlign: 'center',
+                boxShadow: `0 0 10px ${signalColor[signal]}33`
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 9,
+                  color: '#94a3b8',
+                  letterSpacing: 1,
+                  marginBottom: 2
+                }}
+              >
+                RECOMMENDED
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 800 }}>
+                BUY {best.strike} {best.type}
+              </div>
+              <div
+                style={{
+                  fontSize: 15,
+                  fontWeight: 800,
+                  color: signalColor[signal],
+                  marginTop: 2
+                }}
+              >
+                ₹{best.ltp?.toFixed(2) || '—'}
+              </div>
+            </div>
+          )}
+
+          {/* NEUTRAL — wait message */}
+          {signal === 'NEUTRAL' && (
+            <div
+              style={{
+                marginTop: 8,
+                padding: '6px 10px',
+                background: 'rgba(234, 179, 8, 0.08)',
+                border: '2px solid #eab308',
+                borderRadius: 8,
+                textAlign: 'center',
+                boxShadow: '0 0 10px #eab30833'
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#eab308' }}>
+                ⏸ WAIT — NO CLEAR SIGNAL
+              </div>
+              <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>
+                Strategies are mixed. Avoid entry.
+              </div>
+            </div>
+          )}
+
+          {/* Live indicator */}
+          <div
             style={{
-              padding: '8px 20px',
-              background: signalColor[recommendation.type],
-              border: 'none',
-              borderRadius: 8,
-              fontWeight: 700,
-              fontSize: 13,
-              cursor: 'pointer',
-              minWidth: 180
+              marginTop: 10,
+              fontSize: 10,
+              color: connected ? '#22c55e' : '#ef4444',
+              textAlign: 'center',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 4
             }}
           >
-            BUY {recommendation.suggested}
-          </button>
-        ) : (
-          <div style={{ fontSize: 12, color: '#64748b' }}>
-            Waiting for signal…
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: connected ? '#22c55e' : '#ef4444',
+                display: 'inline-block',
+                animation: connected ? 'pulse 1.5s infinite' : 'none'
+              }}
+            />
+            {connected ? 'LIVE' : 'Reconnecting...'}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }
 
-const selectStyle = {
-  padding: '6px 10px',
-  borderRadius: 6,
-  background: '#020617',
-  color: 'white',
-  border: '1px solid #475569',
-  fontSize: 12
-};
-
-function MiniCard({ title, value, color, highlight }) {
+function OptionRow({ label, strike, type, ltp, color }) {
   return (
     <div
       style={{
-        background: '#020617',
-        border: `1px solid ${color}`,
-        borderRadius: 6,
-        padding: '6px 10px',
-        textAlign: 'center',
-        minWidth: 90,
-        boxShadow: highlight ? `0 0 6px ${color}` : 'none'
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '5px 8px',
+        background: '#0f172a',
+        borderRadius: 5,
+        border: `1px solid ${color}`
       }}
     >
-      <div style={{ fontSize: 9, color }}>{title}</div>
-      <div style={{ fontSize: 13, fontWeight: 700 }}>{value}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span
+          style={{
+            fontSize: 9,
+            fontWeight: 700,
+            color,
+            background: `${color}18`,
+            padding: '1px 6px',
+            borderRadius: 3,
+            letterSpacing: 1
+          }}
+        >
+          {label}
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>
+          {strike} {type}
+        </span>
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: '#f59e0b' }}>
+        ₹{ltp?.toFixed(2) || '—'}
+      </div>
     </div>
   );
 }
+
+const containerStyle = {
+  background: '#020617',
+  border: '2px solid #334155',
+  borderRadius: 10,
+  padding: 14,
+  marginBottom: 14,
+  width: 310,
+  minHeight: 150,
+  boxShadow: '0 0 15px rgba(0,0,0,0.4)'
+};

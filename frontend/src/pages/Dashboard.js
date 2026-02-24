@@ -4,7 +4,6 @@ import RoleCard from '../components/RoleCard';
 import OptionSuggestion from '../components/OptionSuggestion';
 import MarketTicker from '../components/MarketTicker';
 import MarketStatus from '../components/MarketStatus';
-import MainLayout from '../layout/MainLayout';
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -111,44 +110,29 @@ function Dashboard() {
         : '#eab308';
 
   return (
-    <MainLayout>
+    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      {/* HEADER - Market Status centered */}
       <div
         style={{
+          width: '100%',
           background: '#020617',
           padding: 15,
           display: 'flex',
-          justifyContent: 'space-between',
+          justifyContent: 'center',
           alignItems: 'center',
           borderBottom: '1px solid #334155'
         }}
       >
-        <div style={{ width: 80 }} />
         <MarketStatus />
-
-        <button
-          onClick={() => {
-            localStorage.removeItem('auth');
-            navigate('/');
-          }}
-          style={{
-            padding: '8px 14px',
-            background: '#dc2626',
-            border: 'none',
-            color: 'white',
-            cursor: 'pointer',
-            borderRadius: 6,
-            flexShrink: 0
-          }}
-        >
-          Logout
-        </button>
       </div>
 
       {/* MARKET STRIP */}
-      <MarketTicker />
+      <div style={{ width: '100%' }}>
+        <MarketTicker />
+      </div>
 
       {/* SELECT INDEX & TIMEFRAME */}
-      <div style={{ textAlign: 'center', padding: 20 }}>
+      <div style={{ width: '100%', maxWidth: 1100, textAlign: 'center', padding: 20 }}>
         <div
           style={{
             display: 'flex',
@@ -433,9 +417,16 @@ function Dashboard() {
         </div>
       )}
 
-      {/* OPTION SUGGESTION CARD */}
-      {!loading && consensus !== 'NEUTRAL' && (
-        <div style={{ padding: '0 30px' }}>
+      {/* OPTION SUGGESTION CARDS */}
+      {!loading && (
+        <div style={{ 
+          width: '100%', 
+          display: 'flex', 
+          justifyContent: 'center', 
+          gap: 20,
+          padding: '0 30px',
+          flexWrap: 'wrap'
+        }}>
           <OptionSuggestion
             signal={consensus}
             price={parseFloat(price)}
@@ -448,15 +439,15 @@ function Dashboard() {
       {!loading && (
         <div
           style={{
+            width: '100%',
+            maxWidth: 1050,
             display: 'flex',
             flexWrap: 'nowrap',
             gap: 12,
             justifyContent: 'center',
             alignItems: 'stretch',
             padding: '20px 15px',
-            overflowX: 'auto',
-            maxWidth: '1050px',
-            margin: '0 auto'
+            overflowX: 'auto'
           }}
         >
           {!signals_by_role || Object.keys(signals_by_role).length === 0 ? (
@@ -468,7 +459,7 @@ function Dashboard() {
           )}
         </div>
       )}
-    </MainLayout>
+    </div>
   );
 }
 

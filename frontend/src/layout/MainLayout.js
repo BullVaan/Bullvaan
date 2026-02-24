@@ -11,7 +11,7 @@ export default function MainLayout() {
           flex: 1,
           background: '#020617',
           minHeight: '100vh',
-          padding: 20
+          overflowX: 'hidden'
         }}
       >
         <Outlet />
