@@ -1,12 +1,36 @@
 {
-  "consensus_threshold": 0.7,
-  "position_size": 1,
-  "stop_loss_percent": 0.5,
-  "target_percent": 1.0,
-  "trading_hours": {
-    "start": "09:15",
-    "end": "15:30"
+  "mode": "paper",
+  "total_capital": 100000,
+  "max_daily_loss": 5000,
+  "max_trades_per_day": 15,
+  "max_lots_per_trade": 5,
+  "market_open": "09:20",
+  "market_close": "15:15",
+  "eod_exit": "15:15",
+  "index_priority": ["NIFTY", "BANKNIFTY", "SENSEX"],
+  "lot_sizes": {
+    "NIFTY": 65,
+    "BANKNIFTY": 30,
+    "SENSEX": 20
   },
-  "max_trades_per_day": 10,
-  "enable_auto_trading": false
+  "signal_rules": {
+    "STRONG": {
+      "target_pts": 20,
+      "sl_pts": 10,
+      "allow_reentry": true,
+      "cooldown_minutes": 5
+    },
+    "MEDIUM": {
+      "target_pts": 12,
+      "sl_pts": 10,
+      "allow_reentry": true,
+      "cooldown_minutes": 5
+    },
+    "WEAK": {
+      "target_pts": 10,
+      "sl_pts": 8,
+      "allow_reentry": false,
+      "cooldown_minutes": 0
+    }
+  }
 }
