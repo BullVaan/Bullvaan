@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const API = 'http://127.0.0.1:8000';
 
-export default function OptionSuggestion({ signal, price, symbol }) {
+export default function OptionSuggestion({ signal, price, symbol, autoEnabled = false }) {
 
   const [options, setOptions] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -131,9 +131,19 @@ export default function OptionSuggestion({ signal, price, symbol }) {
   }, [signal, best?.strike, best?.type, best?.ltp]);
 
   const getOpenTradeLivePrice = () => {
-    if (!openTrade || !options?.options) return null;
-    const tradeType = openTrade.name?.toUpperCase().includes('CE') ? 'CE' : 'PE';
-    return options.options.find(o => o.type === tradeType && o.label.startsWith('atm'))?.ltp || null;
+    if (!openTrade || !options) return null;
+    // Use dedicated open trade LTP from backend (correct even when ATM shifts)
+    if (options.open_trade_ltp != null) return options.open_trade_ltp;
+    // Fallback: match by exact strike and type from trade name
+    if (!options.options) return null;
+    const parts = openTrade.name?.split(' ');
+    if (parts && parts.length >= 3) {
+      const tradeStrike = parseFloat(parts[1]);
+      const tradeType = parts[2];
+      const match = options.options.find(o => o.strike === tradeStrike && o.type === tradeType);
+      if (match) return match.ltp;
+    }
+    return null;
   };
 
   const formatExpiry = (dateStr) => {
@@ -309,27 +319,46 @@ export default function OptionSuggestion({ signal, price, symbol }) {
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 9, color: '#64748b', letterSpacing: 0.5 }}>TOTAL COST</div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: signalColor[signal] }}>
-                  ₹{best.ltp ? (best.ltp * (hasPosition ? (openTrade.quantity || openTrade.lot) : totalQty)).toLocaleString('en-IN', {
-                    minimumFractionDigits: 2, maximumFractionDigits: 2
-                  }) : '—'}
-                </div>
+                {hasPosition && livePrice != null ? (() => {
+                  const qty = openTrade.quantity || openTrade.lot;
+                  const pnl = (livePrice - openTrade.buy_price) * qty;
+                  const isProfit = pnl >= 0;
+                  return <>
+                    <div style={{ fontSize: 9, color: '#64748b', letterSpacing: 0.5 }}>P&L</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: isProfit ? '#22c55e' : '#ef4444' }}>
+                      {isProfit ? '+' : ''}₹{pnl.toLocaleString('en-IN', {
+                        minimumFractionDigits: 2, maximumFractionDigits: 2
+                      })}
+                    </div>
+                  </>;
+                })() : <>
+                  <div style={{ fontSize: 9, color: '#64748b', letterSpacing: 0.5 }}>TOTAL COST</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: signalColor[signal] }}>
+                    ₹{best.ltp ? (best.ltp * totalQty).toLocaleString('en-IN', {
+                      minimumFractionDigits: 2, maximumFractionDigits: 2
+                    }) : '—'}
+                  </div>
+                </>}
               </div>
             </div>
 
             {/* BUY + SELL buttons */}
-            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            {autoEnabled && (
+              <div style={{ textAlign: 'center', padding: '6px 0', fontSize: 11, fontWeight: 700, color: '#22c55e', letterSpacing: 1 }}>
+                ⚡ AUTO TRADER ACTIVE
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: autoEnabled ? 0 : 10 }}>
               <button
                 onClick={() => handleBuy(tradeName, best.ltp)}
-                disabled={actionLoading || hasPosition}
-                title={hasPosition ? 'Sell existing position first' : `Buy ${tradeName}`}
+                disabled={actionLoading || hasPosition || autoEnabled}
+                title={autoEnabled ? 'Auto-trader is active' : hasPosition ? 'Sell existing position first' : `Buy ${tradeName}`}
                 style={{
                   flex: 1, padding: '10px 0', borderRadius: 6, border: 'none',
-                  background: hasPosition ? '#1e293b' : '#22c55e',
-                  color: hasPosition ? '#475569' : '#fff',
+                  background: (hasPosition || autoEnabled) ? '#1e293b' : '#22c55e',
+                  color: (hasPosition || autoEnabled) ? '#475569' : '#fff',
                   fontWeight: 800, fontSize: 13,
-                  cursor: hasPosition ? 'not-allowed' : actionLoading ? 'wait' : 'pointer',
+                  cursor: (hasPosition || autoEnabled) ? 'not-allowed' : actionLoading ? 'wait' : 'pointer',
                   opacity: actionLoading && !hasPosition ? 0.6 : 1
                 }}
               >
@@ -337,14 +366,14 @@ export default function OptionSuggestion({ signal, price, symbol }) {
               </button>
               <button
                 onClick={() => handleSell(livePrice || best.ltp)}
-                disabled={actionLoading || !hasPosition}
-                title={!hasPosition ? 'No open position' : 'Sell to exit'}
+                disabled={actionLoading || !hasPosition || autoEnabled}
+                title={autoEnabled ? 'Auto-trader is active' : !hasPosition ? 'No open position' : 'Sell to exit'}
                 style={{
                   flex: 1, padding: '10px 0', borderRadius: 6, border: 'none',
-                  background: !hasPosition ? '#1e293b' : '#ef4444',
-                  color: !hasPosition ? '#475569' : '#fff',
+                  background: (!hasPosition || autoEnabled) ? '#1e293b' : '#ef4444',
+                  color: (!hasPosition || autoEnabled) ? '#475569' : '#fff',
                   fontWeight: 800, fontSize: 13,
-                  cursor: !hasPosition ? 'not-allowed' : actionLoading ? 'wait' : 'pointer',
+                  cursor: (!hasPosition || autoEnabled) ? 'not-allowed' : actionLoading ? 'wait' : 'pointer',
                   opacity: actionLoading && hasPosition ? 0.6 : 1
                 }}
               >
@@ -387,14 +416,16 @@ export default function OptionSuggestion({ signal, price, symbol }) {
               </div>
               <button
                 onClick={() => handleSell(livePrice || openTrade.buy_price)}
-                disabled={actionLoading}
+                disabled={actionLoading || autoEnabled}
                 style={{
-                  background: '#ef4444', color: '#fff', fontWeight: 800,
+                  background: autoEnabled ? '#1e293b' : '#ef4444',
+                  color: autoEnabled ? '#475569' : '#fff', fontWeight: 800,
                   fontSize: 13, padding: '8px 20px', borderRadius: 6, border: 'none',
-                  cursor: actionLoading ? 'wait' : 'pointer', opacity: actionLoading ? 0.6 : 1
+                  cursor: (actionLoading || autoEnabled) ? 'not-allowed' : 'pointer',
+                  opacity: actionLoading ? 0.6 : 1
                 }}
               >
-                {actionLoading ? 'SELLING...' : 'SELL TO EXIT'}
+                {autoEnabled ? 'AUTO' : actionLoading ? 'SELLING...' : 'SELL TO EXIT'}
               </button>
             </div>
           </>

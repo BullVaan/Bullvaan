@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 const API = 'http://127.0.0.1:8000';
 
@@ -9,6 +9,9 @@ export default function Trades() {
   const [todayDate, setTodayDate] = useState('');
   const [filterDate, setFilterDate] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [liveLtp, setLiveLtp] = useState({});       // { "NIFTY 25400 CE": 128.5 }
+  const [sellingId, setSellingId] = useState(null);  // trade id currently being sold
+  const wsRef = useRef(null);
   const [form, setForm] = useState({
     name: '',
     lot: 1,
@@ -32,9 +35,82 @@ export default function Trades() {
     }
   };
 
+  // Fetch live LTP for open trades — NOT USED, kept for fallback
+  // Real-time LTP comes via WebSocket below
+
+  // Sell an open trade at the current live price
+  const sellTrade = async (trade) => {
+    const ltp = liveLtp[trade.name];
+    if (!ltp) return;
+    setSellingId(trade.id);
+    try {
+      const now = new Date();
+      const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+      const sellTime = ist.toISOString().slice(11, 16);
+      await fetch(`${API}/trades/${trade.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sell_price: ltp, sell_time: sellTime })
+      });
+      fetchTrades(filterDate || undefined);
+    } catch (e) {
+      console.error('Failed to sell trade', e);
+    }
+    setSellingId(null);
+  };
+
   useEffect(() => {
     fetchTrades(filterDate || undefined);
   }, [filterDate]);
+
+  // WebSocket: real-time LTP for open trades
+  useEffect(() => {
+    const hasOpen = trades.some(t => t.status === 'open');
+    if (!hasOpen) {
+      // No open trades — close WS if open
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      setLiveLtp({});
+      return;
+    }
+
+    // Connect WebSocket
+    const connect = () => {
+      const ws = new WebSocket('ws://127.0.0.1:8000/ws/trades');
+      wsRef.current = ws;
+
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          setLiveLtp(data);
+        } catch { /* ignore */ }
+      };
+
+      ws.onclose = () => {
+        // Reconnect after 2s if still has open trades
+        setTimeout(() => {
+          if (trades.some(t => t.status === 'open') && (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED)) {
+            connect();
+          }
+        }, 2000);
+      };
+
+      ws.onerror = () => ws.close();
+    };
+
+    if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+      connect();
+    }
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [trades]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -188,10 +264,11 @@ export default function Trades() {
         background: '#020617',
         border: '1px solid #334155',
         borderRadius: 10,
-        overflow: 'hidden'
+        overflow: 'auto',
+        maxHeight: 'calc(100vh - 280px)'
       }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
+          <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
             <tr style={{ background: '#0f172a' }}>
               {['Date', 'Trade', 'Lot', 'Qty', 'Buy Price', 'Sell Price', 'Total Price', 'Buy Time', 'Sell Time', 'P/L (₹)', ''].map((h, i) => (
                 <th key={i} style={{
@@ -218,7 +295,12 @@ export default function Trades() {
             ) : (
               trades.map((t) => {
                 const pnl = t.pnl || 0;
-                const rowPnlColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#64748b';
+                const isOpen = t.status === 'open';
+                const currentLtp = liveLtp[t.name];
+                const livePnl = isOpen && currentLtp ? ((currentLtp - t.buy_price) * (t.quantity || t.lot)) : 0;
+                const rowPnlColor = isOpen
+                  ? (livePnl > 0 ? '#22c55e' : livePnl < 0 ? '#ef4444' : '#64748b')
+                  : (pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#64748b');
                 return (
                   <tr key={t.id} style={{ borderBottom: '1px solid #1e293b' }}>
                     <td style={{ padding: '10px 14px', fontSize: 12, color: '#94a3b8', whiteSpace: 'nowrap' }}>{t.date || '—'}</td>
@@ -227,7 +309,17 @@ export default function Trades() {
                     <td style={{ padding: '10px 14px', fontSize: 13, textAlign: 'center' }}>{t.quantity || t.lot}</td>
                     <td style={{ padding: '10px 14px', fontSize: 13, textAlign: 'center', fontFamily: 'monospace' }}>₹{Number(t.buy_price).toFixed(2)}</td>
                     <td style={{ padding: '10px 14px', fontSize: 13, textAlign: 'center', fontFamily: 'monospace' }}>
-                      {t.sell_price ? `₹${Number(t.sell_price).toFixed(2)}` : <span style={{ color: '#f59e0b', fontSize: 11 }}>OPEN</span>}
+                      {isOpen ? (
+                        currentLtp ? (
+                          <span style={{ color: currentLtp >= t.buy_price ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
+                            ₹{Number(currentLtp).toFixed(2)}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#f59e0b', fontSize: 11 }}>OPEN</span>
+                        )
+                      ) : (
+                        `₹${Number(t.sell_price).toFixed(2)}`
+                      )}
                     </td>
                     <td style={{ padding: '10px 14px', fontSize: 13, textAlign: 'center', fontFamily: 'monospace', color: '#f59e0b' }}>
                       ₹{(Number(t.buy_price) * (t.quantity || t.lot)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -235,9 +327,33 @@ export default function Trades() {
                     <td style={{ padding: '10px 14px', fontSize: 12, textAlign: 'center', color: '#94a3b8' }}>{t.buy_time || '—'}</td>
                     <td style={{ padding: '10px 14px', fontSize: 12, textAlign: 'center', color: '#94a3b8' }}>{t.sell_time || '—'}</td>
                     <td style={{ padding: '10px 14px', fontSize: 13, textAlign: 'center', fontWeight: 700, color: rowPnlColor, fontFamily: 'monospace' }}>
-                      {pnl !== 0 ? `${pnl > 0 ? '+' : ''}₹${pnl.toFixed(2)}` : '—'}
+                      {isOpen ? (
+                        currentLtp ? `${livePnl >= 0 ? '+' : ''}₹${livePnl.toFixed(2)}` : '—'
+                      ) : (
+                        pnl !== 0 ? `${pnl > 0 ? '+' : ''}₹${pnl.toFixed(2)}` : '—'
+                      )}
                     </td>
-                    <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                    <td style={{ padding: '10px 14px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      {isOpen && currentLtp ? (
+                        <button
+                          onClick={() => sellTrade(t)}
+                          disabled={sellingId === t.id}
+                          style={{
+                            background: '#ef4444',
+                            color: '#fff',
+                            border: 'none',
+                            padding: '4px 12px',
+                            borderRadius: 5,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            cursor: sellingId === t.id ? 'wait' : 'pointer',
+                            opacity: sellingId === t.id ? 0.6 : 1,
+                            marginRight: 6
+                          }}
+                        >
+                          {sellingId === t.id ? '...' : 'SELL'}
+                        </button>
+                      ) : null}
                       <button
                         onClick={() => deleteTrade(t.id)}
                         title="Delete trade"

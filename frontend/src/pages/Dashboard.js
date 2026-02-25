@@ -26,7 +26,8 @@ function Dashboard() {
   });
   const [atr, setAtr] = useState('-');
   const [error, setError] = useState('');
-
+  const [autoTrader, setAutoTrader] = useState({ enabled: false, running: false });
+  const [autoLoading, setAutoLoading] = useState(false);
   /* ---------- AUTH CHECK ---------- */
   useEffect(() => {
     const auth = localStorage.getItem('auth');
@@ -94,12 +95,39 @@ function Dashboard() {
     }
   };
 
+  /* ---------- AUTO-TRADER ---------- */
+  const fetchAutoStatus = async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:8000/auto-trader/status');
+      const data = await res.json();
+      setAutoTrader(data);
+    } catch { /* ignore */ }
+  };
+
+  const toggleAutoTrader = async () => {
+    setAutoLoading(true);
+    try {
+      const endpoint = autoTrader.enabled ? 'stop' : 'start';
+      await fetch(`http://127.0.0.1:8000/auto-trader/${endpoint}`, { method: 'POST' });
+      await fetchAutoStatus();
+    } catch (e) { console.error('Auto-trader toggle failed', e); }
+    setAutoLoading(false);
+  };
+
   /* ---------- AUTO REFRESH ---------- */
   useEffect(() => {
     fetchSignals(selectedSymbol);
+    fetchAutoStatus();
     const interval = setInterval(() => fetchSignals(selectedSymbol), 300000);
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); };
   }, [selectedSymbol, selectedTimeframe]);
+
+  // Poll auto-trader status only while engine is active
+  useEffect(() => {
+    if (!autoTrader.enabled) return;
+    const autoInterval = setInterval(fetchAutoStatus, 3000);
+    return () => clearInterval(autoInterval);
+  }, [autoTrader.enabled]);
 
   /* ---------- CONSENSUS COLOR ---------- */
   const consensusColor =
@@ -431,7 +459,70 @@ function Dashboard() {
             signal={consensus}
             price={parseFloat(price)}
             symbol={selectedSymbol}
+            autoEnabled={autoTrader.enabled}
           />
+        </div>
+      )}
+
+      {/* AUTO-TRADER CONTROL PANEL */}
+      {!loading && (
+        <div style={{
+          width: '100%',
+          maxWidth: 660,
+          margin: '16px auto 0',
+          padding: '14px 20px',
+          background: autoTrader.enabled ? '#0a1628' : '#020617',
+          border: `2px solid ${autoTrader.enabled ? '#22c55e' : '#334155'}`,
+          borderRadius: 12,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 16,
+          boxShadow: autoTrader.enabled ? '0 0 20px rgba(34,197,94,0.15)' : 'none',
+        }}>
+          {/* Left: Status info */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 10, height: 10, borderRadius: '50%',
+              background: autoTrader.enabled ? '#22c55e' : '#475569',
+              boxShadow: autoTrader.enabled ? '0 0 8px #22c55e' : 'none',
+            }} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: autoTrader.enabled ? '#22c55e' : '#94a3b8', letterSpacing: 0.5 }}>
+                AUTO TRADER {autoTrader.enabled ? 'ACTIVE' : 'OFF'}
+                {autoTrader.killed && <span style={{ color: '#ef4444', marginLeft: 8 }}>KILLED</span>}
+              </div>
+              <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                Paper Mode • Capital: ₹{(autoTrader.available_capital ?? autoTrader.capital ?? 100000).toLocaleString('en-IN')}
+                {autoTrader.enabled && (
+                  <> • Trades: {autoTrader.daily_trade_count || 0}/{autoTrader.max_trades_per_day || 15}
+                  • P&L: <span style={{ color: (autoTrader.daily_pnl || 0) >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
+                    {(autoTrader.daily_pnl || 0) >= 0 ? '+' : ''}₹{(autoTrader.daily_pnl || 0).toFixed(2)}
+                  </span></>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Right: Toggle button */}
+          <button
+            onClick={toggleAutoTrader}
+            disabled={autoLoading}
+            style={{
+              padding: '8px 20px',
+              borderRadius: 8,
+              border: 'none',
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: autoLoading ? 'wait' : 'pointer',
+              background: autoTrader.enabled ? '#dc2626' : '#22c55e',
+              color: '#fff',
+              letterSpacing: 0.5,
+              opacity: autoLoading ? 0.6 : 1,
+            }}
+          >
+            {autoLoading ? '...' : autoTrader.enabled ? 'STOP' : 'START'}
+          </button>
         </div>
       )}
 
