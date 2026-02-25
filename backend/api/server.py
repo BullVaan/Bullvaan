@@ -112,6 +112,9 @@ from strategies.strategy_6_supertrend import SupertrendStrategy
 from strategies.strategy_8_stochastic import StochasticStrategy
 from strategies.strategy_9_adx import ADXStrategy
 
+# auto-trading engine
+from engine.auto_trader import AutoTrader
+
 # data utils
 from utils.yahoo_finance import fetch_history, standardize_ohlcv
 import yfinance as yf
@@ -540,21 +543,33 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
         # Apply new rules
         consensus = "NEUTRAL"
         stop_loss_warning = False
+        signal_strength = "NONE"  # STRONG, MEDIUM, WEAK, NONE
         
         if ts_direction:
-            # Rule 1: Trend+Strength agrees (3+) AND Momentum mostly neutral (2+)
-            if mom_neutral >= 2:
+            # All Trend agree?
+            trend_all = all(s == ts_direction for s in trend_signals) if trend_signals else False
+            # All Strength agree?
+            strength_all = all(s == ts_direction for s in strength_signals) if strength_signals else False
+            # Momentum agreement
+            mom_agree = (mom_buy >= 2 if ts_direction == "BUY" else mom_sell >= 2)
+            
+            # STRONG: Trend ALL + Momentum 2/3 + Strength ALL
+            if trend_all and strength_all and mom_agree:
                 consensus = ts_direction
-            # Rule 2: Trend+Strength agrees (3+) AND Momentum says opposite (2+)
+                signal_strength = "STRONG"
+            # MEDIUM: Trend ALL + Strength ALL + Momentum mostly neutral
+            elif trend_all and strength_all and mom_neutral >= 2:
+                consensus = ts_direction
+                signal_strength = "MEDIUM"
+            # WEAK: Trend+Strength overrides opposing Momentum
             elif (ts_direction == "BUY" and mom_sell >= 2) or (ts_direction == "SELL" and mom_buy >= 2):
                 consensus = ts_direction
                 stop_loss_warning = True
-            # Rule 3: Momentum agrees with Trend+Strength
-            elif (ts_direction == "BUY" and mom_buy >= 2) or (ts_direction == "SELL" and mom_sell >= 2):
-                consensus = ts_direction
+                signal_strength = "WEAK"
+            # Fallback: Trend+Strength direction holds
             else:
-                # Mixed signals
                 consensus = ts_direction
+                signal_strength = "MEDIUM"
 
         # response
         return {
@@ -566,6 +581,7 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
             "india_vix": india_vix,
             "atr": atr,
             "consensus": consensus,
+            "signal_strength": signal_strength,
             "stop_loss_warning": stop_loss_warning,
             "buy_votes": buy,
             "sell_votes": sell,
@@ -746,6 +762,73 @@ SYMBOL_MAP = {
     "^BSESN": "SENSEX", "SENSEX": "SENSEX",
 }
 
+# =========================
+# Auto-Trader Helpers
+# =========================
+def _auto_get_signal(symbol):
+    """Wrapper: call get_signals() for the auto-trader"""
+    return get_signals(symbol=symbol, timeframe="5m")
+
+def _auto_get_option_ltp(prefix, opt_type, strike=None):
+    """
+    Get live option LTP from KiteTicker tick store.
+    If strike is given, look up that exact instrument.
+    If not, look up the current ATM.
+    """
+    try:
+        zerodha_symbol = prefix  # already "NIFTY", "BANKNIFTY", etc.
+        expiry_options, _ = get_near_expiry_options(zerodha_symbol)
+        cfg = SYMBOL_CONFIG.get(zerodha_symbol, SYMBOL_CONFIG["NIFTY"])
+
+        if strike is None:
+            # Calculate ATM from spot
+            spot_token = _get_spot_token(zerodha_symbol)
+            if not spot_token:
+                return None
+            spot_tick = get_tick(spot_token)
+            if not spot_tick:
+                return None
+            spot = spot_tick["last_price"]
+            interval = cfg["interval"]
+            strike = round(spot / interval) * interval
+
+        # Find the instrument
+        opt = next(
+            (i for i in expiry_options
+             if i['strike'] == strike and i['instrument_type'] == opt_type),
+            None
+        )
+        if not opt:
+            return None
+
+        tok = opt['instrument_token']
+        # Check tick store first
+        tick = get_tick(tok)
+        if tick:
+            return tick["last_price"]
+
+        # Not subscribed yet — subscribe and fetch via API
+        start_ticker({tok: {
+            "name": opt['tradingsymbol'],
+            "key": f"{cfg['exchange']}:{opt['tradingsymbol']}"
+        }})
+        # Try API fallback
+        try:
+            ltp_key = f"{cfg['exchange']}:{opt['tradingsymbol']}"
+            ltp_data = kite.ltp(ltp_key)
+            return ltp_data.get(ltp_key, {}).get("last_price")
+        except Exception:
+            return None
+    except Exception as e:
+        logger.error(f"Auto-trader LTP fetch error: {e}")
+        return None
+
+# Initialize auto-trader (singleton)
+auto_trader = AutoTrader(
+    get_signal_fn=_auto_get_signal,
+    get_option_ltp_fn=_auto_get_option_ltp,
+)
+
 _near_expiry_cache = {}
 
 def get_near_expiry_options(zerodha_symbol):
@@ -856,6 +939,54 @@ async def ws_options(websocket: WebSocket):
                         start_ticker(subscribe)
                         logger.info(f"Subscribed {len(subscribe)} option tokens for {zerodha_symbol} strike {strike}")
 
+                # ── Track open trade instrument for live LTP ──
+                open_trade_ltp_val = None
+                try:
+                    trades = _load_trades()
+                    active_trade = next(
+                        (t for t in trades
+                         if t.get('status') == 'open'
+                         and t['name'].upper().startswith(zerodha_symbol)),
+                        None
+                    )
+                    if active_trade:
+                        parts = active_trade['name'].split()
+                        trade_strike = float(parts[1])
+                        trade_type = parts[2]  # CE or PE
+                        # Check if already in current ATM/OTM set
+                        existing_tok = next(
+                            (tok for tok, info in option_tokens.items()
+                             if info['strike'] == trade_strike and info['type'] == trade_type),
+                            None
+                        )
+                        if existing_tok:
+                            tick = get_tick(existing_tok)
+                            open_trade_ltp_val = tick["last_price"] if tick else None
+                        else:
+                            # Subscribe to the bought instrument
+                            trade_opt = next(
+                                (i for i in expiry_options
+                                 if i['strike'] == trade_strike
+                                 and i['instrument_type'] == trade_type),
+                                None
+                            )
+                            if trade_opt:
+                                tok = trade_opt['instrument_token']
+                                if tok not in option_tokens:
+                                    option_tokens[tok] = {
+                                        "label": "open_trade",
+                                        "strike": trade_opt['strike'],
+                                        "type": trade_opt['instrument_type']
+                                    }
+                                    start_ticker({tok: {
+                                        "name": trade_opt['tradingsymbol'],
+                                        "key": f"{cfg['exchange']}:{trade_opt['tradingsymbol']}"
+                                    }})
+                                tick = get_tick(tok)
+                                open_trade_ltp_val = tick["last_price"] if tick else None
+                except Exception as e:
+                    logger.error(f"Open trade LTP tracking error: {e}")
+
                 # Build response from tick store
                 options_list = []
                 for tok, info in option_tokens.items():
@@ -868,13 +999,17 @@ async def ws_options(websocket: WebSocket):
                         "ltp": ltp
                     })
 
-                await websocket.send_text(json.dumps({
+                resp = {
                     "symbol": zerodha_symbol,
                     "expiry": str(nearest_expiry),
                     "atm_strike": strike,
                     "options": options_list,
                     "timestamp": datetime.now().isoformat()
-                }))
+                }
+                if open_trade_ltp_val is not None:
+                    resp["open_trade_ltp"] = open_trade_ltp_val
+
+                await websocket.send_text(json.dumps(resp))
 
             except (WebSocketDisconnect, asyncio.CancelledError):
                 break
@@ -890,6 +1025,120 @@ async def ws_options(websocket: WebSocket):
         pass
     except Exception as e:
         logger.error(f"Options WS error: {e}", exc_info=True)
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+# =========================
+# WebSocket: Real-time Trade LTP (open positions)
+# =========================
+@app.websocket("/ws/trades")
+async def ws_trades(websocket: WebSocket):
+    """
+    Streams live LTP for all open trade instruments via KiteTicker — real-time.
+    Automatically detects open trades, subscribes to their instrument tokens,
+    and pushes price updates on every tick.
+    """
+    await websocket.accept()
+    try:
+        subscribed_tokens = {}  # { instrument_token: trade_name }
+
+        while True:
+            try:
+                # Load open trades
+                trades = _load_trades()
+                open_trades = [t for t in trades if t.get('status') == 'open']
+
+                if not open_trades:
+                    await websocket.send_text(json.dumps({}))
+                    await wait_for_tick(timeout=2)
+                    continue
+
+                # Parse each open trade name and ensure we're subscribed
+                needed = {}  # { trade_name: { prefix, strike, type, token } }
+                for t in open_trades:
+                    name = t['name']
+                    parts = name.split()
+                    if len(parts) < 3:
+                        continue
+                    prefix = parts[0]
+                    try:
+                        strike = float(parts[1])
+                    except ValueError:
+                        continue
+                    opt_type = parts[2]
+
+                    # Check if already subscribed
+                    existing = next(
+                        (tok for tok, meta in subscribed_tokens.items() if meta.get("name") == name),
+                        None
+                    )
+                    if existing:
+                        needed[name] = subscribed_tokens[existing]
+                        needed[name]["token"] = existing
+                        continue
+
+                    # Find instrument and subscribe
+                    zerodha_symbol = prefix
+                    cfg = SYMBOL_CONFIG.get(zerodha_symbol, SYMBOL_CONFIG.get("NIFTY"))
+                    expiry_options, _ = get_near_expiry_options(zerodha_symbol)
+                    if not expiry_options:
+                        continue
+
+                    opt = next(
+                        (i for i in expiry_options
+                         if i['strike'] == strike and i['instrument_type'] == opt_type),
+                        None
+                    )
+                    if not opt:
+                        continue
+
+                    tok = opt['instrument_token']
+                    ltp_key = f"{cfg['exchange']}:{opt['tradingsymbol']}"
+                    subscribed_tokens[tok] = {"name": name, "ltp_key": ltp_key}
+                    needed[name] = {"token": tok, "ltp_key": ltp_key}
+                    start_ticker({tok: {
+                        "name": opt['tradingsymbol'],
+                        "key": ltp_key
+                    }})
+
+                # Build LTP response from tick store (with Kite API fallback)
+                ltp_map = {}
+                for name, info in needed.items():
+                    tok = info["token"] if isinstance(info, dict) else info
+                    tick = get_tick(tok)
+                    if tick:
+                        ltp_map[name] = tick["last_price"]
+                    elif isinstance(info, dict) and info.get("ltp_key"):
+                        # Tick store empty (market closed?) — try Kite API
+                        try:
+                            ltp_data = kite.ltp(info["ltp_key"])
+                            price = ltp_data.get(info["ltp_key"], {}).get("last_price")
+                            if price:
+                                ltp_map[name] = price
+                        except Exception:
+                            pass
+
+                await websocket.send_text(json.dumps(ltp_map))
+
+            except (WebSocketDisconnect, asyncio.CancelledError):
+                break
+            except Exception as e:
+                if 'close' in str(e).lower() or any(c in str(e) for c in ['1001', '1005', '1006', '1012']):
+                    break
+                logger.error(f"Trades WS error: {e}")
+
+            await wait_for_tick(timeout=1)
+
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        pass
+    except Exception as e:
+        if 'close' in str(e).lower() or any(c in str(e) for c in ['1001', '1005', '1006', '1012']):
+            pass
+        else:
+            logger.error(f"Trades WS error: {e}", exc_info=True)
     finally:
         try:
             await websocket.close()
@@ -1061,6 +1310,30 @@ def get_active_trades():
     open_trades = [t for t in trades if t.get('status') == 'open']
     return {"trades": open_trades}
 
+@app.post("/trades/live-ltp")
+def get_trades_live_ltp(body: dict = Body(...)):
+    """
+    Get live LTP for open trade instruments.
+    body: { "names": ["NIFTY 25400 CE", "BANKNIFTY 61000 CE"] }
+    Returns: { "NIFTY 25400 CE": 128.50, ... }
+    """
+    names = body.get("names", [])
+    result = {}
+    for name in names:
+        try:
+            parts = name.split()
+            if len(parts) < 3:
+                continue
+            prefix = parts[0]                    # "NIFTY"
+            strike = float(parts[1])             # 25400
+            opt_type = parts[2]                  # "CE" or "PE"
+            ltp = _auto_get_option_ltp(prefix, opt_type, strike=strike)
+            if ltp is not None:
+                result[name] = ltp
+        except Exception:
+            continue
+    return result
+
 @app.get("/trades")
 def get_trades(date: str = None):
     """
@@ -1141,3 +1414,37 @@ def delete_trade(trade_id: int):
     trades = [t for t in trades if t['id'] != trade_id]
     _save_trades(trades)
     return {"status": "deleted"}
+
+
+# =========================
+# Auto-Trader API Endpoints
+# =========================
+@app.get("/auto-trader/status")
+def auto_trader_status():
+    """Get auto-trader engine status"""
+    return auto_trader.get_status()
+
+@app.post("/auto-trader/start")
+async def auto_trader_start():
+    """Start the auto-trading engine"""
+    if auto_trader.enabled:
+        return {"status": "already_running"}
+    loop = asyncio.get_running_loop()
+    auto_trader.start(loop=loop)
+    return {"status": "started", "mode": "paper"}
+
+@app.post("/auto-trader/stop")
+async def auto_trader_stop():
+    """Stop the auto-trading engine"""
+    if not auto_trader.enabled:
+        return {"status": "already_stopped"}
+    # Close all open positions before stopping
+    auto_trader.stop()
+    return {"status": "stopped"}
+
+@app.post("/auto-trader/test-mode")
+async def auto_trader_test_mode(body: dict = Body(...)):
+    """Toggle test mode (bypasses market hours check)"""
+    import engine.auto_trader as at_module
+    at_module.TEST_MODE = body.get("enabled", False)
+    return {"test_mode": at_module.TEST_MODE}
