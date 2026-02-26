@@ -1,31 +1,33 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-function Login() {
+function Signup() {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  const handleLogin = async () => {
+  const handleSignup = async () => {
+    setMessage('');
     setLoading(true);
-    setError('');
     try {
-      const res = await fetch('/api/login', {
+      const res = await fetch('/api/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email })
       });
       const data = await res.json();
       if (res.ok) {
-        localStorage.setItem('auth', 'true');
-        navigate('/dashboard');
+        setMessage(data.message);
+        setEmail('');
+        setTimeout(() => {
+          navigate('/');
+        }, 2000);
       } else {
-        setError(data.detail || 'Invalid credentials');
+        setMessage(data.detail || 'Signup failed.');
       }
     } catch {
-      setError('Login failed. Please try again.');
+      setMessage('Signup failed.');
     }
     setLoading(false);
   };
@@ -60,7 +62,7 @@ function Login() {
             letterSpacing: 1
           }}
         >
-          Sign In
+          Create Account
         </h2>
         <p
           style={{
@@ -70,7 +72,7 @@ function Login() {
             fontSize: 15
           }}
         >
-          Welcome back! Please login to your account.
+          Enter your email to request access. Admin will share your password.
         </p>
         <input
           placeholder="Email"
@@ -90,28 +92,9 @@ function Login() {
             transition: 'border 0.2s'
           }}
         />
-        <input
-          placeholder="Password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{
-            width: '100%',
-            padding: 14,
-            marginTop: 10,
-            borderRadius: 10,
-            border: '1px solid #334155',
-            background: '#0f172a',
-            color: '#fff',
-            fontSize: 16,
-            outline: 'none',
-            marginBottom: 8,
-            transition: 'border 0.2s'
-          }}
-        />
         <button
-          onClick={handleLogin}
-          disabled={loading}
+          onClick={handleSignup}
+          disabled={loading || !email}
           style={{
             width: '100%',
             padding: 14,
@@ -128,26 +111,26 @@ function Login() {
             transition: 'background 0.2s'
           }}
         >
-          {loading ? 'Logging in...' : 'Login'}
+          {loading ? 'Signing up...' : 'Signup'}
         </button>
-        {error && (
+        {message && (
           <div
             style={{
-              color: '#f87171',
               marginTop: 14,
+              color: '#38bdf8',
               textAlign: 'center',
               fontWeight: 500
             }}
           >
-            {error}
+            {message}
           </div>
         )}
         <div style={{ textAlign: 'center', marginTop: 28 }}>
           <span style={{ color: '#94a3b8', fontSize: 15 }}>
-            Don't have an account?
+            Already have an account?
           </span>
           <button
-            onClick={() => navigate('/signup')}
+            onClick={() => navigate('/')}
             style={{
               marginLeft: 8,
               background: 'none',
@@ -160,7 +143,7 @@ function Login() {
               padding: 0
             }}
           >
-            Create New Account
+            Sign In
           </button>
         </div>
       </div>
@@ -168,4 +151,4 @@ function Login() {
   );
 }
 
-export default Login;
+export default Signup;
