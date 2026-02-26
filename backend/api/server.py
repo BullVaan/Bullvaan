@@ -121,7 +121,13 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
+from api.signup import router as signup_router
+from api.login import router as login_router
+
 app = FastAPI(title="Bullvan Trading API")
+
+app.include_router(signup_router, prefix="/api")
+app.include_router(login_router, prefix="/api")
 
 # =========================
 # Setup Logging
