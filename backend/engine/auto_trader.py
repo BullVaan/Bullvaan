@@ -265,12 +265,11 @@ class AutoTrader:
 
         # Kill switch check
         if self._is_killed():
-            # Close all open positions
+            # Close all open positions — use buy_price as fallback if LTP unavailable
             for t in self._get_open_trades():
-                prefix = t['name'].split()[0]
                 ltp = self._get_trade_ltp(t)
-                if ltp:
-                    self._execute_sell(t, ltp, reason="KILL_SWITCH")
+                sell_price = ltp if ltp else t['buy_price']  # fallback: flat exit
+                self._execute_sell(t, sell_price, reason="KILL_SWITCH")
             logger.warning(f"AUTO TRADER KILLED: Daily loss ₹{self._daily_pnl} >= ₹{MAX_DAILY_LOSS}")
             return
 
@@ -278,8 +277,8 @@ class AutoTrader:
         if _is_eod_exit_time():
             for t in self._get_open_trades():
                 ltp = self._get_trade_ltp(t)
-                if ltp:
-                    self._execute_sell(t, ltp, reason="EOD_EXIT")
+                sell_price = ltp if ltp else t['buy_price']
+                self._execute_sell(t, sell_price, reason="EOD_EXIT")
             return
 
         # Not market hours? Skip
@@ -449,7 +448,13 @@ class AutoTrader:
             self._task = asyncio.ensure_future(self.run())
 
     def stop(self):
-        """Stop the engine"""
+        """Stop the engine — close all open auto trades"""
+        # Close all open auto-traded positions before stopping
+        for t in self._get_open_trades():
+            if t.get('auto'):
+                ltp = self._get_trade_ltp(t)
+                sell_price = ltp if ltp else t['buy_price']
+                self._execute_sell(t, sell_price, reason="MANUAL_STOP")
         self.enabled = False
         if self._task:
             self._task.cancel()
