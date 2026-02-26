@@ -194,13 +194,13 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {atm && (
                 <OptionRow
-                  label={signal === 'NEUTRAL' ? 'CE' : 'ATM'} strike={atm.strike}
-                  type={atm.type} ltp={atm.ltp} color={signal === 'NEUTRAL' ? '#3b82f6' : '#3b82f6'}
+                  label={signal === 'NEUTRAL' ? 'ATM' : 'ATM'} strike={atm.strike}
+                  type={atm.type} ltp={atm.ltp} color='#3b82f6'
                 />
               )}
               {otm && (
                 <OptionRow
-                  label={signal === 'NEUTRAL' ? 'PE' : 'OTM'} strike={otm.strike}
+                  label={signal === 'NEUTRAL' ? 'ATM' : 'OTM'} strike={otm.strike}
                   type={otm.type} ltp={otm.ltp} color={signal === 'NEUTRAL' ? '#ef4444' : '#a855f7'}
                 />
               )}
@@ -274,7 +274,7 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
                 <div style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0' }}>
                   {openTrade.name} — Bought @ ₹{Number(openTrade.buy_price).toFixed(2)}
                 </div>
-                {livePrice && (
+                {livePrice > 0 && (
                   <div style={{
                     fontSize: 13, fontWeight: 800, marginTop: 2,
                     color: livePrice >= openTrade.buy_price ? '#22c55e' : '#ef4444'
@@ -319,7 +319,7 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                {hasPosition && livePrice != null ? (() => {
+                {hasPosition && livePrice != null && livePrice > 0 ? (() => {
                   const qty = openTrade.quantity || openTrade.lot;
                   const pnl = (livePrice - openTrade.buy_price) * qty;
                   const isProfit = pnl >= 0;

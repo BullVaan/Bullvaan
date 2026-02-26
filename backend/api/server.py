@@ -967,7 +967,7 @@ async def ws_options(websocket: WebSocket):
                         )
                         if existing_tok:
                             tick = get_tick(existing_tok)
-                            open_trade_ltp_val = tick["last_price"] if tick else None
+                            open_trade_ltp_val = tick["last_price"] if tick and tick.get("last_price") else None
                         else:
                             # Subscribe to the bought instrument
                             trade_opt = next(
@@ -989,7 +989,7 @@ async def ws_options(websocket: WebSocket):
                                         "key": f"{cfg['exchange']}:{trade_opt['tradingsymbol']}"
                                     }})
                                 tick = get_tick(tok)
-                                open_trade_ltp_val = tick["last_price"] if tick else None
+                                open_trade_ltp_val = tick["last_price"] if tick and tick.get("last_price") else None
                 except Exception as e:
                     logger.error(f"Open trade LTP tracking error: {e}")
 
