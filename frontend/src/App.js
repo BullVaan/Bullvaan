@@ -8,6 +8,7 @@ import Trades from './pages/Trades';
 import History from './pages/History';
 import Settings from './pages/Settings';
 import ProtectedRoute from './components/ProtectedRoute';
+import CandlesCharts from './pages/CandlesCharts';
 
 function App() {
   return (
@@ -56,6 +57,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <Settings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/candles-charts"
+            element={
+              <ProtectedRoute>
+                <CandlesCharts />
               </ProtectedRoute>
             }
           />
