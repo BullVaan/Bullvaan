@@ -118,8 +118,6 @@ from engine.auto_trader import AutoTrader
 # data utils
 from utils.yahoo_finance import fetch_history, standardize_ohlcv
 import yfinance as yf
-import pandas as pd
-import numpy as np
 
 from api.signup import router as signup_router
 from api.login import router as login_router
@@ -1282,7 +1280,7 @@ def get_candles(symbol: str, interval: str = "5m"):
             if not token:
                 return {"error": f"Instrument token not found for {symbol_up}"}
             to_date = datetime.now()
-            from_date = to_date - timedelta(days=3)
+            from_date = to_date - timedelta(days=10)
             candles = kite.historical_data(token, from_date, to_date, kite_interval)
             # Format for frontend
             out = []
@@ -1303,7 +1301,7 @@ def get_candles(symbol: str, interval: str = "5m"):
             yf_symbol = symbol + ".NS"
             df = yf.download(
                 yf_symbol,
-                period="3d",
+                period="10d",
                 interval=interval
             )
             if df.empty:
@@ -1388,7 +1386,6 @@ def _on_ticks(ws, ticks):
                         _aggregate_tick_to_candle(sym, tick, interval)
 
 # Replace the original _on_ticks
-import types
 globals()['_on_ticks'] = _on_ticks
 
 @app.websocket("/ws/candles/{symbol}/{interval}")

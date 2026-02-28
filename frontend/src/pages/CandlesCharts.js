@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-
+import { useEffect, useRef, useState } from 'react';
+import { FaArrowUp } from 'react-icons/fa';
 import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts';
 
 const indexSymbolList = ['NIFTY', 'BANKNIFTY', 'SENSEX'];
@@ -16,25 +16,42 @@ export default function CandlesCharts() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [pattern, setPattern] = useState(null);
-  const [symbol, setSymbol] = useState('NIFTY'); // Default index
-  const [chartKey, setChartKey] = useState(0); // force remount
+  const [symbol, setSymbol] = useState('NIFTY');
+  const [chartKey, setChartKey] = useState(0);
 
   useEffect(() => {
     setLoading(true);
+    setError('');
     fetch(`http://localhost:8000/candles?symbol=${symbol}&interval=${tf}`)
       .then((res) => res.json())
       .then((data) => {
         setLoading(false);
-        if (!Array.isArray(data)) {
+        if (!Array.isArray(data) || data.length === 0) {
           setError('Failed to load chart data');
           return;
         }
-        // Remove chart only if not already disposed
+        setError('');
         if (chartInstance.current && chartInstance.current.remove) {
           try {
             chartInstance.current.remove();
           } catch (e) {}
         }
+        // Convert all candle times to IST (add 5.5 hours)
+        const dataIST = data.map((candle) => ({
+          ...candle,
+          time: candle.time + 19800 // 5.5 hours in seconds
+        }));
+        // Filter to regular market hours (9:15 AM to 3:30 PM IST)
+        const dataISTFiltered = dataIST.filter((candle) => {
+          const d = new Date(candle.time * 1000);
+          const hour = d.getHours();
+          const minute = d.getMinutes();
+          // Market open: 9:15, close: 15:30
+          if (hour < 9 || hour > 15) return false;
+          if (hour === 9 && minute < 15) return false;
+          if (hour === 15 && minute > 30) return false;
+          return true;
+        });
         const chart = createChart(chartContainerRef.current, {
           height: 500,
           layout: {
@@ -48,22 +65,33 @@ export default function CandlesCharts() {
           timeScale: { timeVisible: true }
         });
         chartInstance.current = chart;
-
-        // Candles
         const candleSeries = chart.addSeries(CandlestickSeries, {
           upColor: '#22c55e',
           downColor: '#ef4444',
-          wickUpColor: '#22c55e',
           wickDownColor: '#ef4444'
         });
-        candleSeries.setData(data);
-
-        // Support/Resistance lines
-        drawSRLines(chart, data);
-
-        // Pattern detection
-        const detected = detectPattern(data);
-        setPattern(detected);
+        candleSeries.setData(dataISTFiltered);
+        drawSRLines(chart, dataISTFiltered);
+        const detected = detectPattern(dataISTFiltered);
+        let detectedTime = null;
+        if (detected) {
+          detectedTime = dataISTFiltered[dataISTFiltered.length - 1].time;
+        }
+        setPattern(detected ? { ...detected, time: detectedTime } : null);
+        if (detected) {
+          candleSeries.setMarkers([
+            {
+              time: dataISTFiltered[dataISTFiltered.length - 1].time,
+              position: 'belowBar',
+              color: '#fbbf24',
+              shape: 'arrowUp',
+              text: detected.name,
+              size: 2
+            }
+          ]);
+        } else {
+          candleSeries.setMarkers([]);
+        }
       })
       .catch(() => {
         setLoading(false);
@@ -81,28 +109,44 @@ export default function CandlesCharts() {
 
   function drawSRLines(chart, data) {
     if (!data || data.length < 10) return;
-    const highs = data.map((d) => d.high);
-    const lows = data.map((d) => d.low);
-    const resistance = Math.max(...highs.slice(-20));
-    const support = Math.min(...lows.slice(-20));
-    const resLine = chart.addSeries(LineSeries, {
-      color: '#ef4444',
-      lineWidth: 1,
-      lineStyle: 2
+    // Use last 20 candles for pivots
+    const recent = data.slice(-20);
+    const highs = recent.map((d) => d.high);
+    const lows = recent.map((d) => d.low);
+    const closes = recent.map((d) => d.close);
+    const high = Math.max(...highs);
+    const low = Math.min(...lows);
+    const close = closes[closes.length - 1];
+    // Pivot point
+    const pivot = (high + low + close) / 3;
+    // Immediate support and resistance
+    const r1 = 2 * pivot - low;
+    const s1 = 2 * pivot - high;
+    const levels = [
+      { value: r1, color: '#fde047', label: 'R1' },
+      { value: s1, color: '#bbf7d0', label: 'S1' },
+    ];
+    levels.forEach(({ value, color, label }) => {
+      const line = chart.addSeries(LineSeries, {
+        color,
+        lineWidth: 1,
+        lineStyle: 2
+      });
+      line.setData([
+        { time: data[0].time, value },
+        { time: data[data.length - 1].time, value }
+      ]);
+      if (line.createPriceLine) {
+        line.createPriceLine({
+          price: value,
+          color,
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: label
+        });
+      }
     });
-    resLine.setData([
-      { time: data[0].time, value: resistance },
-      { time: data[data.length - 1].time, value: resistance }
-    ]);
-    const supLine = chart.addSeries(LineSeries, {
-      color: '#22c55e',
-      lineWidth: 1,
-      lineStyle: 2
-    });
-    supLine.setData([
-      { time: data[0].time, value: support },
-      { time: data[data.length - 1].time, value: support }
-    ]);
   }
 
   function detectPattern(candles) {
@@ -120,6 +164,46 @@ export default function CandlesCharts() {
   return (
     <div style={{ padding: 32 }}>
       <h1>Charts</h1>
+      {pattern && (
+        <div
+          style={{
+            marginBottom: 18,
+            padding: 16,
+            background: '#0f172a',
+            color: '#fbbf24',
+            borderRadius: 8,
+            fontWeight: 600,
+            fontSize: 18,
+            display: 'inline-block'
+          }}
+        >
+          <FaArrowUp
+            style={{
+              color: '#fbbf24',
+              marginRight: 8,
+              verticalAlign: 'middle'
+            }}
+          />
+          {pattern.name} pattern detected!
+          <span style={{ marginLeft: 12 }}>Signal: {pattern.signal}</span>
+          {pattern.time && (
+            <span
+              style={{
+                marginLeft: 12,
+                color: '#fff',
+                fontWeight: 400,
+                fontSize: 14
+              }}
+            >
+              at{' '}
+              {new Date(pattern.time * 1000).toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata'
+              })}{' '}
+              IST
+            </span>
+          )}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
         {indexSymbolList.map((idx) => (
           <button
@@ -163,25 +247,16 @@ export default function CandlesCharts() {
           width: '100%',
           height: 500,
           background: '#18181b',
-          borderRadius: 8
+          borderRadius: 8,
+          overflowX: 'auto',
+          whiteSpace: 'nowrap'
         }}
       />
       {loading && <p>Loading chart...</p>}
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      {pattern && (
-        <div
-          style={{
-            marginTop: 24,
-            padding: 16,
-            background: '#0f172a',
-            color: '#22c55e',
-            borderRadius: 8
-          }}
-        >
-          <strong>{pattern.name} pattern detected!</strong>
-          <div>Signal: {pattern.signal}</div>
-        </div>
+      {error && !loading && chartKey === 0 && (
+        <p style={{ color: 'red' }}>{error}</p>
       )}
+      {/* Pattern signal now shown above chart */}
       {!pattern && !loading && (
         <div
           style={{
