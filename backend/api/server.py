@@ -939,7 +939,8 @@ async def ws_options(websocket: WebSocket):
                         if opt:
                             tok = opt['instrument_token']
                             option_tokens[tok] = {"label": label, "strike": opt['strike'], "type": opt['instrument_type']}
-                            subscribe[tok] = {"name": opt['tradingsymbol'], "key": f"{cfg['exchange']}:{opt['tradingsymbol']}"}
+                            subscribe[tok] = {"name": opt['tradingsymbol'], "key": f"{cfg['exchange']}:{opt['tradingsymbol']}"
+                        }
 
                     if subscribe:
                         start_ticker(subscribe)
@@ -1254,34 +1255,178 @@ def get_history(symbol: str):
         for i, row in df.iterrows()
     ] 
 
+
 @app.get("/candles")
 def get_candles(symbol: str, interval: str = "5m"):
-    import yfinance as yf
+    """
+    Return OHLC candles for indices (NIFTY, BANKNIFTY, SENSEX) using Zerodha API,
+    fallback to yfinance for stocks. Supports 1, 5, 15 minute intervals.
+    """
+    import logging
+    from datetime import datetime, timedelta
+    import pandas as pd
+    try:
+        zerodha_indices = ["NIFTY", "BANKNIFTY", "SENSEX"]
+        interval_map = {"1m": "minute", "5m": "5minute", "15m": "15minute"}
+        # Accept both "1m" and "1minute" etc.
+        interval_key = interval.lower().replace("minute", "m")
+        if interval_key not in ["1m", "5m", "15m"]:
+            return {"error": "Supported intervals: 1m, 5m, 15m"}
+        kite_interval = interval_map[interval_key]
+        symbol_up = symbol.upper()
+        if symbol_up in zerodha_indices:
+            cfg = SYMBOL_CONFIG.get(symbol_up, SYMBOL_CONFIG["NIFTY"])
+            spot_key = cfg["spot"]
+            # Find instrument_token for index
+            token = _get_spot_token(symbol_up)
+            if not token:
+                return {"error": f"Instrument token not found for {symbol_up}"}
+            to_date = datetime.now()
+            from_date = to_date - timedelta(days=3)
+            candles = kite.historical_data(token, from_date, to_date, kite_interval)
+            # Format for frontend
+            out = []
+            for c in candles:
+                # Zerodha returns time in UTC
+                ts = int(pd.Timestamp(c["date"]).timestamp())
+                out.append({
+                    "time": ts,
+                    "open": float(c["open"]),
+                    "high": float(c["high"]),
+                    "low": float(c["low"]),
+                    "close": float(c["close"])
+                })
+            return out
+        else:
+            # fallback to yfinance for stocks
+            import yfinance as yf
+            yf_symbol = symbol + ".NS"
+            df = yf.download(
+                yf_symbol,
+                period="3d",
+                interval=interval
+            )
+            if df.empty:
+                logging.warning(f"yfinance returned empty DataFrame for {yf_symbol} interval {interval}")
+                return {"error": f"No data for {yf_symbol} interval {interval}"}
+            candles = [
+                {
+                    "time": int((i + timedelta(hours=5, minutes=30)).timestamp()),
+                    "open": float(r["Open"].iloc[0]) if hasattr(r["Open"], "iloc") else float(r["Open"]),
+                    "high": float(r["High"].iloc[0]) if hasattr(r["High"], "iloc") else float(r["High"]),
+                    "low": float(r["Low"].iloc[0]) if hasattr(r["Low"], "iloc") else float(r["Low"]),
+                    "close": float(r["Close"].iloc[0]) if hasattr(r["Close"], "iloc") else float(r["Close"])
+                }
+                for i, r in df.iterrows()
+            ]
+            return candles
+    except Exception as e:
+        logging.error(f"Error fetching candles for {symbol}: {e}")
+        return {"error": str(e)}
 
-    df = yf.download(
-        symbol + ".NS",
-        period="2d",
-        interval=interval
-    )
 
-    return [
-        {
-            "time": int((i + timedelta(hours=5, minutes=30)).timestamp()),
-            "open": float(r["Open"]),
-            "high": float(r["High"]),
-            "low": float(r["Low"]),
-            "close": float(r["Close"])
-        }
-        for i, r in df.iterrows()
-    ]    
+# --- Live Candle Aggregator ---
+from collections import defaultdict, deque
+
+# { (symbol, interval): deque([candle_dict, ...], maxlen=500) }
+_live_candles = defaultdict(lambda: deque(maxlen=500))
+_last_candle_time = {}  # (symbol, interval): last_candle_epoch
+
+def _aggregate_tick_to_candle(symbol, tick, interval='1m'):
+    """Aggregate a tick into the current candle for symbol/interval."""
+    from datetime import datetime, timezone
+    # Only for indices
+    if symbol not in ["NIFTY", "BANKNIFTY", "SENSEX"]:
+        return
+    # Get current time rounded to interval
+    now = datetime.now(timezone.utc)
+    if interval == '1m':
+        candle_time = now.replace(second=0, microsecond=0)
+    elif interval == '5m':
+        minute = (now.minute // 5) * 5
+        candle_time = now.replace(minute=minute, second=0, microsecond=0)
+    elif interval == '15m':
+        minute = (now.minute // 15) * 15
+        candle_time = now.replace(minute=minute, second=0, microsecond=0)
+    else:
+        return
+    ts = int(candle_time.timestamp())
+    key = (symbol, interval)
+    price = tick.get('last_price') or tick.get('close')
+    if not price:
+        return
+    # If new candle, append
+    if _last_candle_time.get(key) != ts:
+        _live_candles[key].append({
+            'time': ts,
+            'open': price,
+            'high': price,
+            'low': price,
+            'close': price
+        })
+        _last_candle_time[key] = ts
+    else:
+        # Update current candle
+        c = _live_candles[key][-1]
+        c['close'] = price
+        c['high'] = max(c['high'], price)
+        c['low'] = min(c['low'], price)
+
+# Patch _on_ticks to aggregate live candles
+_orig_on_ticks = _on_ticks
+def _on_ticks(ws, ticks):
+    _orig_on_ticks(ws, ticks)
+    for tick in ticks:
+        token = tick.get('instrument_token')
+        # Map token to symbol
+        for sym, cfg in SYMBOL_CONFIG.items():
+            spot_key = cfg['spot']
+            for t, info in INDEX_TOKENS.items():
+                if t == token and info['key'] == spot_key:
+                    # Aggregate for all intervals
+                    for interval in ['1m', '5m', '15m']:
+                        _aggregate_tick_to_candle(sym, tick, interval)
+
+# Replace the original _on_ticks
+import types
+globals()['_on_ticks'] = _on_ticks
 
 @app.websocket("/ws/candles/{symbol}/{interval}")
 async def ws_candles(websocket: WebSocket, symbol: str, interval: str):
     await websocket.accept()
     try:
+        symbol = symbol.upper()
+        interval = interval.lower()
+        key = (symbol, interval)
+        from fastapi.encoders import jsonable_encoder
+        import logging
         while True:
-            candles = get_latest_candle(symbol, interval)  # your logic
-            await websocket.send_json(candles)
+            candles = list(_live_candles[key])
+            # Fallback: if no live candles (market closed), fetch historical
+            if not candles:
+                try:
+                    from datetime import datetime, timedelta
+                    import pandas as pd
+                    interval_map = {"1m": "minute", "5m": "5minute", "15m": "15minute"}
+                    kite_interval = interval_map.get(interval, "5minute")
+                    token = _get_spot_token(symbol)
+                    if token:
+                        to_date = datetime.now()
+                        from_date = to_date - timedelta(days=2)
+                        hist = kite.historical_data(token, from_date, to_date, kite_interval)
+                        candles = [
+                            {
+                                "time": int(pd.Timestamp(c["date"]).timestamp()),
+                                "open": float(c["open"]),
+                                "high": float(c["high"]),
+                                "low": float(c["low"]),
+                                "close": float(c["close"])
+                            }
+                            for c in hist
+                        ]
+                except Exception as e:
+                    logging.error(f"WS fallback candle error: {e}")
+            await websocket.send_json(jsonable_encoder(candles))
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         print("candle client disconnected")
