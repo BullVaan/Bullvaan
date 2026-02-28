@@ -48,11 +48,11 @@ export default function StockModal({ stock, onClose }) {
   /* ---------- CHART ---------- */
   useEffect(() => {
     if (!stock) return;
-
-    if (chartInstance.current) {
-      chartInstance.current.remove();
+    if (chartInstance.current && chartInstance.current.remove) {
+      try {
+        chartInstance.current.remove();
+      } catch (e) {}
     }
-
     const chart = createChart(chartContainerRef.current, {
       height: 300,
       layout: {
@@ -65,9 +65,7 @@ export default function StockModal({ stock, onClose }) {
       },
       timeScale: { timeVisible: true }
     });
-
     chartInstance.current = chart;
-
     /* CANDLES */
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#22c55e',
@@ -75,54 +73,35 @@ export default function StockModal({ stock, onClose }) {
       wickUpColor: '#22c55e',
       wickDownColor: '#ef4444'
     });
-
     /* VOLUME */
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: ''
     });
-
     chart.priceScale('').applyOptions({
       scaleMargins: { top: 0.8, bottom: 0 }
     });
-
-    /* INITIAL LOAD */
-    fetch(`http://127.0.0.1:8000/candles?symbol=${stock.symbol}&interval=${tf}`)
+    fetch(`http://localhost:8000/candles?symbol=${stock.symbol}&interval=${tf}`)
       .then((res) => res.json())
       .then((data) => {
         candleSeries.setData(data);
-
-        volumeSeries.setData(
-          data.map((d) => ({
-            time: d.time,
-            value: d.volume,
-            color: d.close > d.open ? '#22c55e' : '#ef4444'
-          }))
-        );
-
+        if (data[0] && data[0].volume !== undefined) {
+          volumeSeries.setData(
+            data.map((d) => ({
+              time: d.time,
+              value: d.volume,
+              color: d.close > d.open ? '#22c55e' : '#ef4444'
+            }))
+          );
+        }
         drawSRLines(chart, data);
       });
-
-    /* LIVE STREAM */
-    const ws = new WebSocket(
-      `ws://127.0.0.1:8000/ws/candles/${stock.symbol}/${tf}`
-    );
-
-    ws.onmessage = (e) => {
-      const candle = JSON.parse(e.data);
-
-      candleSeries.update(candle);
-
-      volumeSeries.update({
-        time: candle.time,
-        value: candle.volume,
-        color: candle.close > candle.open ? '#22c55e' : '#ef4444'
-      });
-    };
-
     return () => {
-      ws.close();
-      chart.remove();
+      if (chartInstance.current && chartInstance.current.remove) {
+        try {
+          chartInstance.current.remove();
+        } catch (e) {}
+      }
     };
   }, [stock, tf]);
 
