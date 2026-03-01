@@ -16,7 +16,6 @@ function Dashboard() {
   const [selectedTimeframe, setSelectedTimeframe] = useState('5m');
   const [loading, setLoading] = useState(true);
   const [consensus, setConsensus] = useState('NEUTRAL');
-  const [stopLossWarning, setStopLossWarning] = useState(false);
   const [price, setPrice] = useState('-');
   const [india_vix, setIndiaVix] = useState({
     value: '-',
@@ -77,7 +76,6 @@ function Dashboard() {
       setSignals(Array.isArray(data.signals) ? data.signals : []);
       setSignalsByRole(data.signals_by_role || {});
       setConsensus(data.consensus || 'NEUTRAL');
-      setStopLossWarning(data.stop_loss_warning || false);
       setPrice(data.price ?? '-');
       setIndiaVix(
         data.india_vix || {
@@ -225,22 +223,6 @@ function Dashboard() {
               {consensus}
             </div>
 
-            {stopLossWarning && consensus !== 'NEUTRAL' && (
-              <div
-                style={{
-                  marginTop: 6,
-                  padding: '4px 10px',
-                  background: '#fbbf24',
-                  color: '#000',
-                  fontSize: 12,
-                  fontWeight: 'bold',
-                  borderRadius: 4,
-                  display: 'inline-block'
-                }}
-              >
-                ⚠️ USE STOP LOSS
-              </div>
-            )}
           </div>
 
           {/* Timeframe Selector */}
