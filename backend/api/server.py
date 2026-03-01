@@ -519,61 +519,82 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
         sell = votes.count("SELL")
         neutral = votes.count("NEUTRAL")
 
-        # NEW CONSENSUS LOGIC: Trend + Strength vs Momentum
-        # Trend (2) + Strength (2) = 4 indicators
-        # Momentum = 3 indicators
+        # ═══════════════════════════════════════════════════════
+        # CATEGORY-LEVEL CONSENSUS
+        # Each category decides its own direction first,
+        # then overall signal needs 2+ categories agreeing.
+        # ═══════════════════════════════════════════════════════
         
         trend_signals = [s["signal"] for s in signals_by_role.get("Trend", [])]
         strength_signals = [s["signal"] for s in signals_by_role.get("Strength", [])]
         momentum_signals = [s["signal"] for s in signals_by_role.get("Momentum", [])]
-        
-        # Combine Trend + Strength
-        trend_strength = trend_signals + strength_signals
-        ts_buy = trend_strength.count("BUY")
-        ts_sell = trend_strength.count("SELL")
-        
-        # Momentum counts
-        mom_buy = momentum_signals.count("BUY")
-        mom_sell = momentum_signals.count("SELL")
-        mom_neutral = momentum_signals.count("NEUTRAL")
-        
-        # Determine Trend+Strength direction (need 3+ of 4)
-        ts_direction = None
-        if ts_buy >= 3:
-            ts_direction = "BUY"
-        elif ts_sell >= 3:
-            ts_direction = "SELL"
-        
-        # Apply new rules
+
+        def category_consensus(signals):
+            """
+            2 indicators: both must agree, BUY+NEUTRAL=BUY, conflict=NEUTRAL
+            3 indicators: 2+ neutral=NEUTRAL, any conflict=NEUTRAL, else active direction
+            """
+            if not signals:
+                return "NEUTRAL"
+            buy_c = signals.count("BUY")
+            sell_c = signals.count("SELL")
+            neutral_c = signals.count("NEUTRAL")
+            # Conflict: BUY and SELL both present
+            if buy_c > 0 and sell_c > 0:
+                return "NEUTRAL"
+            # For 3+ indicators: 2+ neutral = NEUTRAL
+            if len(signals) >= 3 and neutral_c >= 2:
+                return "NEUTRAL"
+            if buy_c > 0:
+                return "BUY"
+            if sell_c > 0:
+                return "SELL"
+            return "NEUTRAL"
+
+        trend_dir = category_consensus(trend_signals)
+        momentum_dir = category_consensus(momentum_signals)
+        strength_dir = category_consensus(strength_signals)
+
+        # Count category directions
+        directions = [trend_dir, momentum_dir, strength_dir]
+        cat_buy = directions.count("BUY")
+        cat_sell = directions.count("SELL")
+        cat_neutral = directions.count("NEUTRAL")
+
         consensus = "NEUTRAL"
         stop_loss_warning = False
-        signal_strength = "NONE"  # STRONG, MEDIUM, WEAK, NONE
-        
-        if ts_direction:
-            # All Trend agree?
-            trend_all = all(s == ts_direction for s in trend_signals) if trend_signals else False
-            # All Strength agree?
-            strength_all = all(s == ts_direction for s in strength_signals) if strength_signals else False
-            # Momentum agreement
-            mom_agree = (mom_buy >= 2 if ts_direction == "BUY" else mom_sell >= 2)
-            
-            # STRONG: Trend ALL + Momentum 2/3 + Strength ALL
-            if trend_all and strength_all and mom_agree:
-                consensus = ts_direction
+        signal_strength = "NONE"
+
+        # Need 2+ categories agreeing on same direction
+        if cat_buy >= 2:
+            consensus = "BUY"
+            # STRONG: all 3 agree
+            if cat_buy == 3:
                 signal_strength = "STRONG"
-            # MEDIUM: Trend ALL + Strength ALL + Momentum mostly neutral
-            elif trend_all and strength_all and mom_neutral >= 2:
-                consensus = ts_direction
+            # MEDIUM: 2 agree, 1 neutral
+            elif cat_neutral >= 1:
                 signal_strength = "MEDIUM"
-            # WEAK: Trend+Strength overrides opposing Momentum
-            elif (ts_direction == "BUY" and mom_sell >= 2) or (ts_direction == "SELL" and mom_buy >= 2):
-                consensus = ts_direction
-                stop_loss_warning = True
-                signal_strength = "WEAK"
-            # Fallback: Trend+Strength direction holds
+                # Stop loss warning: Trend+Momentum agree but Strength neutral, or Strength+Momentum agree but Trend neutral
+                if (trend_dir == "BUY" and momentum_dir == "BUY" and strength_dir == "NEUTRAL") or \
+                   (strength_dir == "BUY" and momentum_dir == "BUY" and trend_dir == "NEUTRAL"):
+                    stop_loss_warning = True
+            # 2 agree, 1 opposes — don't trade
             else:
-                consensus = ts_direction
+                consensus = "NEUTRAL"
+                signal_strength = "NONE"
+        elif cat_sell >= 2:
+            consensus = "SELL"
+            if cat_sell == 3:
+                signal_strength = "STRONG"
+            elif cat_neutral >= 1:
                 signal_strength = "MEDIUM"
+                # Stop loss warning: Trend+Momentum agree but Strength neutral, or Strength+Momentum agree but Trend neutral
+                if (trend_dir == "SELL" and momentum_dir == "SELL" and strength_dir == "NEUTRAL") or \
+                   (strength_dir == "SELL" and momentum_dir == "SELL" and trend_dir == "NEUTRAL"):
+                    stop_loss_warning = True
+            else:
+                consensus = "NEUTRAL"
+                signal_strength = "NONE"
 
         # response
         return {
