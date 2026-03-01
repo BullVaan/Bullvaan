@@ -47,12 +47,7 @@ SIGNAL_RULES = {
         "allow_reentry": True,
         "cooldown_minutes": 5,
     },
-    "WEAK": {
-        "target_pts": 10,
-        "sl_pts": 8,
-        "allow_reentry": False,
-        "cooldown_minutes": 0,
-    },
+
 }
 
 # Safety limits
@@ -116,7 +111,7 @@ class AutoTrader:
 
     def __init__(self, get_signal_fn, get_option_ltp_fn):
         """
-        get_signal_fn(symbol) -> dict with: consensus, signal_strength, stop_loss_warning, india_vix
+        get_signal_fn(symbol) -> dict with: consensus, signal_strength, india_vix
         get_option_ltp_fn(index_prefix, strike, opt_type) -> float LTP or None
         """
         self.get_signal = get_signal_fn
@@ -126,7 +121,7 @@ class AutoTrader:
 
         # Per-index state
         self._cooldowns = {}      # {prefix: datetime when cooldown expires}
-        self._weak_traded = {}    # {prefix: True} — weak signal: no re-entry
+
         self._daily_trade_count = 0
         self._daily_pnl = 0.0
         self._last_reset_date = None
@@ -141,7 +136,7 @@ class AutoTrader:
             self._daily_trade_count = 0
             self._daily_pnl = 0.0
             self._cooldowns = {}
-            self._weak_traded = {}
+
             self._last_reset_date = today
             logger.info("Auto-trader: daily counters reset")
 
@@ -325,8 +320,6 @@ class AutoTrader:
                     rule = SIGNAL_RULES.get(trade_strength, SIGNAL_RULES["STRONG"])
                     if rule["allow_reentry"]:
                         self._set_cooldown(prefix, rule["cooldown_minutes"])
-                    else:
-                        self._weak_traded[prefix] = True
                     continue
 
                 # Target hit
@@ -364,10 +357,6 @@ class AutoTrader:
 
                 # Cooldown check
                 if self._is_on_cooldown(prefix):
-                    continue
-
-                # Weak signal no re-entry check
-                if strength == "WEAK" and self._weak_traded.get(prefix):
                     continue
 
                 # Get ATM option price

@@ -555,46 +555,27 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
         momentum_dir = category_consensus(momentum_signals)
         strength_dir = category_consensus(strength_signals)
 
-        # Count category directions
-        directions = [trend_dir, momentum_dir, strength_dir]
-        cat_buy = directions.count("BUY")
-        cat_sell = directions.count("SELL")
-        cat_neutral = directions.count("NEUTRAL")
+        # ═══════════════════════════════════════════════════════
+        # OVERALL CONSENSUS: Trend + Strength must agree.
+        # Momentum must be NEUTRAL or same direction.
+        # Anything else → NEUTRAL.
+        # ═══════════════════════════════════════════════════════
 
         consensus = "NEUTRAL"
-        stop_loss_warning = False
         signal_strength = "NONE"
 
-        # Need 2+ categories agreeing on same direction
-        if cat_buy >= 2:
-            consensus = "BUY"
-            # STRONG: all 3 agree
-            if cat_buy == 3:
+        # Trend and Strength must both have the same active direction
+        if trend_dir in ("BUY", "SELL") and trend_dir == strength_dir:
+            # Momentum must agree or stay neutral
+            if momentum_dir == trend_dir:
+                # All 3 agree → STRONG
+                consensus = trend_dir
                 signal_strength = "STRONG"
-            # MEDIUM: 2 agree, 1 neutral
-            elif cat_neutral >= 1:
+            elif momentum_dir == "NEUTRAL":
+                # Trend + Strength agree, Momentum neutral → MEDIUM
+                consensus = trend_dir
                 signal_strength = "MEDIUM"
-                # Stop loss warning: Trend+Momentum agree but Strength neutral, or Strength+Momentum agree but Trend neutral
-                if (trend_dir == "BUY" and momentum_dir == "BUY" and strength_dir == "NEUTRAL") or \
-                   (strength_dir == "BUY" and momentum_dir == "BUY" and trend_dir == "NEUTRAL"):
-                    stop_loss_warning = True
-            # 2 agree, 1 opposes — don't trade
-            else:
-                consensus = "NEUTRAL"
-                signal_strength = "NONE"
-        elif cat_sell >= 2:
-            consensus = "SELL"
-            if cat_sell == 3:
-                signal_strength = "STRONG"
-            elif cat_neutral >= 1:
-                signal_strength = "MEDIUM"
-                # Stop loss warning: Trend+Momentum agree but Strength neutral, or Strength+Momentum agree but Trend neutral
-                if (trend_dir == "SELL" and momentum_dir == "SELL" and strength_dir == "NEUTRAL") or \
-                   (strength_dir == "SELL" and momentum_dir == "SELL" and trend_dir == "NEUTRAL"):
-                    stop_loss_warning = True
-            else:
-                consensus = "NEUTRAL"
-                signal_strength = "NONE"
+            # else: Momentum opposes → NEUTRAL (no trade)
 
         # response
         return {
@@ -607,7 +588,6 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
             "atr": atr,
             "consensus": consensus,
             "signal_strength": signal_strength,
-            "stop_loss_warning": stop_loss_warning,
             "buy_votes": buy,
             "sell_votes": sell,
             "neutral_votes": neutral,

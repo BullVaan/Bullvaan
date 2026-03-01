@@ -16,27 +16,27 @@
 
 ## 2. Signal Strength Classification
 
-### How It Works: Category-Level Consensus
+### Core Rule: Trend + Strength Must Agree
 
-Each category (Trend, Momentum, Strength) decides its own direction **independently** first, then the overall signal requires **2+ categories agreeing**.
+**Trend** and **Strength** are the two structural categories — they must both point in the same direction (BUY or SELL) for any trade signal.
 
-#### Per-Category Rules
+**Momentum** acts as a confirmer — it must either agree or stay neutral. If Momentum opposes, no trade.
+
+#### Per-Category Rules (unchanged)
 | Indicators | Rule |
 |-----------|------|
 | 2 (Trend, Strength) | Both must agree. BUY+NEUTRAL = BUY. BUY+SELL = NEUTRAL (conflict). |
 | 3 (Momentum) | Any BUY+SELL present = NEUTRAL (conflict). 2+ NEUTRAL = NEUTRAL. Otherwise active direction wins. |
 
 #### Overall Signal
-| Scenario | Signal Strength | Stop Loss Warning? |
-|---------|----------------|--------------------|
-| All 3 categories agree (BUY/BUY/BUY or SELL/SELL/SELL) | **STRONG** | No |
-| Trend + Strength agree, Momentum = NEUTRAL | **MEDIUM** | No |
-| Trend + Momentum agree, Strength = NEUTRAL | **MEDIUM** | ⚠️ Yes |
-| Strength + Momentum agree, Trend = NEUTRAL | **MEDIUM** | ⚠️ Yes |
-| 2 agree but 1 **opposes** (e.g. BUY/BUY/SELL) | **NONE** (no trade) | — |
-| Only 1 or 0 categories have direction | **NONE** (no trade) | — |
+| Scenario | Signal Strength |
+|---------|----------------|
+| Trend + Strength + Momentum all agree | **STRONG** |
+| Trend + Strength agree, Momentum = NEUTRAL | **MEDIUM** |
+| Trend + Strength agree, Momentum **opposes** | **NEUTRAL** (no trade) |
+| Trend ≠ Strength (disagree or one neutral) | **NEUTRAL** (no trade) |
 
-> **Stop Loss Warning** appears only when Momentum is one of the two agreeing categories and the missing category is either Trend or Strength. When Trend + Strength agree (the two structural categories) and Momentum sits out, confidence is higher — no warning needed.
+> **Key insight:** Momentum alone can never trigger a trade. Only Trend + Strength alignment matters. Momentum just upgrades MEDIUM → STRONG or blocks the trade if it opposes.
 
 ---
 
@@ -61,9 +61,8 @@ Each category (Trend, Momentum, Strength) decides its own direction **independen
 | Risk:Reward    | 1:1.2            |
 | Re-entry       | ✅ Yes, after 5-min cooldown |
 | Action         | Buy ATM CE (BUY) or ATM PE (SELL) |
-| ⚠️ Warning     | If `stop_loss_warning = True`, dashboard shows "USE STOP LOSS" alert |
 
-> **Note:** The old WEAK signal no longer exists. The consensus engine now only outputs STRONG, MEDIUM, or NONE. The `stop_loss_warning` flag on MEDIUM signals serves as the caution indicator when Momentum is part of the agreement but one structural category (Trend or Strength) is absent.
+> **Note:** Only two signal strengths exist: STRONG and MEDIUM. No WEAK signal, no stop-loss warning. Trend + Strength agreement is the non-negotiable foundation.
 
 ---
 
@@ -71,7 +70,7 @@ Each category (Trend, Momentum, Strength) decides its own direction **independen
 
 An auto-trade is placed when ALL of the following are true:
 
-1. Signal strength is STRONG, MEDIUM, or WEAK (not NEUTRAL)
+1. Signal strength is STRONG or MEDIUM (not NEUTRAL/NONE)
 2. No open position already exists for that index
 3. Sufficient capital available (ATM price × lot size × lots ≤ available capital)
 4. Current time is between **9:20 AM – 3:15 PM IST**
@@ -88,11 +87,14 @@ A trade is auto-closed when ANY of the following is true:
 | Condition           | Action                                      |
 |---------------------|---------------------------------------------|
 | **Target hit**      | LTP ≥ buy_price + target_pts → SELL         |
-| **Stop-loss hit**   | LTP ≤ buy_price - sl_pts → SELL             |
-| **Signal reversal** | BUY→SELL or SELL→BUY → Close, then re-enter |
+| **Stop-loss hit**   | LTP ≤ buy_price - sl_pts → SELL + 5min cooldown |
+| **Signal reversal** | BUY→SELL or SELL→BUY → Close (re-enter next tick) |
 | **Signal NEUTRAL**  | Close position                              |
 | **EOD Exit**        | 3:15 PM IST → Close ALL open positions      |
 | **Kill switch**     | Daily loss ≥ ₹5,000 → Close ALL, stop engine|
+| **Manual stop**     | AUTO toggle OFF → Close all auto-traded positions (reason: `MANUAL_STOP`) |
+
+> **Fallback:** If LTP is unavailable during Kill Switch, EOD Exit, or Manual Stop, the engine sells at `buy_price` (flat exit) to avoid positions staying open.
 
 ---
 
@@ -134,7 +136,6 @@ lots = min(max_lots, 5)   # Capped at 5 lots
 | EOD forced exit     | **3:15 PM IST**      | All positions closed, no overnight holding   |
 | Cooldown (Strong)   | **5 minutes**        | Wait after SL hit before re-entry            |
 | Cooldown (Medium)   | **5 minutes**        | Wait after SL hit before re-entry            |
-| Stop loss warning   | **Dashboard alert**  | "USE STOP LOSS" when Momentum agrees but Trend or Strength absent |
 | Max lots per trade  | **5**                | Hard cap regardless of capital               |
 
 
@@ -163,28 +164,23 @@ trend_dir    = category_consensus([MA, EMA])              # 2 strategies
 momentum_dir = category_consensus([RSI, MACD, Stoch])     # 3 strategies
 strength_dir = category_consensus([Supertrend, ADX])      # 2 strategies
 
-cat_buy     = [trend_dir, momentum_dir, strength_dir].count("BUY")
-cat_sell    = [trend_dir, momentum_dir, strength_dir].count("SELL")
-cat_neutral = [trend_dir, momentum_dir, strength_dir].count("NEUTRAL")
-
-# Need 2+ categories on same direction
-if cat_buy >= 2 (or cat_sell >= 2):
-    if all_3_agree:                    → STRONG
-    elif 2_agree + 1_neutral:          → MEDIUM
-        # Stop loss warning if Momentum is one of the two agreeing categories
-        if momentum agrees + (trend OR strength) neutral:
-            stop_loss_warning = True
-    elif 2_agree + 1_opposes:          → NEUTRAL (don't trade)
+# Core rule: Trend + Strength must agree
+if trend_dir in ("BUY", "SELL") and trend_dir == strength_dir:
+    if momentum_dir == trend_dir:      → STRONG  (all 3 agree)
+    elif momentum_dir == "NEUTRAL":    → MEDIUM  (Trend+Strength, Momentum sitting out)
+    else:                              → NEUTRAL (Momentum opposes — don't trade)
 else:
-    → NEUTRAL (don't trade)
+    → NEUTRAL (Trend & Strength don't align — don't trade)
 ```
 
 ---
 
 ## 9. How It Works (Flow)
 
+The engine runs as an async background task, ticking **every 2 seconds** (`asyncio.sleep(2)`).
+
 ```
-Every tick (real-time via KiteTicker):
+Every tick (~2 seconds, real-time via KiteTicker):
 │
 ├─ 1. Check time → Is it 9:20 AM – 3:15 PM?
 │     └─ No → If 3:15+ → Close all open positions
@@ -201,10 +197,11 @@ Every tick (real-time via KiteTicker):
 │     │     └─ Check signal → NEUTRAL? → SELL
 │     │
 │     └─ 3b. No open position?
-│           ├─ Get signal strength (STRONG/MEDIUM/WEAK/NEUTRAL)
+│           ├─ Get signal strength (STRONG/MEDIUM/NEUTRAL)
 │           ├─ Check capital availability
 │           ├─ Check cooldown timer
 │           ├─ Check trade count < 15
+│           ├─ Calculate ATM strike (rounded to nearest 50 for NIFTY, 100 for BANKNIFTY/SENSEX)
 │           └─ All clear? → BUY ATM option
 │
 └─ 4. Log everything → trades.json + console
@@ -220,8 +217,8 @@ Every tick (real-time via KiteTicker):
   - "AUTO" badge shown on trade tile
   - All trades logged same as manual (visible in Trades page)
 - When AUTO is OFF:
-  - Engine stops monitoring
-  - Existing open positions stay open (manual control)
+  - Engine calls `stop()` → closes all open **auto-traded** positions (reason: `MANUAL_STOP`)
+  - Manual trades are untouched
   - Manual BUY/SELL buttons re-enabled
 
 ---
@@ -249,4 +246,4 @@ When paper trading proves profitable, flip `mode: "live"`:
 ---
 
 *Last updated: 1 Mar 2026*
-*Engine version: 1.1 (Paper Trading — Category-Level Consensus)*
+*Engine version: 1.2 (Paper Trading — Trend+Strength Gate)*
