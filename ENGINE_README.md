@@ -61,6 +61,7 @@
 | Risk:Reward    | 1:1.2            |
 | Re-entry       | ✅ Yes, after 5-min cooldown |
 | Action         | Buy ATM CE (BUY) or ATM PE (SELL) |
+| ⚠️ Warning     | If `stop_loss_warning = True`, dashboard shows "USE STOP LOSS" alert |
 
 > **Note:** Only two signal strengths exist: STRONG and MEDIUM. No WEAK signal, no stop-loss warning. Trend + Strength agreement is the non-negotiable foundation.
 
