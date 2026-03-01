@@ -16,23 +16,27 @@
 
 ## 2. Signal Strength Classification
 
-### STRONG Signal
-- **Trend**: ALL 2 strategies agree (BUY or SELL)
-- **Momentum**: At least 2 of 3 agree with same direction
-- **Strength**: ALL 2 strategies agree
-- **Basically**: All 3 category tiles show same direction
+### How It Works: Category-Level Consensus
 
-### MEDIUM Signal
-- **Trend**: ALL 2 strategies agree
-- **Strength**: ALL 2 strategies agree
-- **Momentum**: Mostly NEUTRAL (2+ neutral)
-- **Basically**: Trend + Strength aligned, Momentum sitting out
+Each category (Trend, Momentum, Strength) decides its own direction **independently** first, then the overall signal requires **2+ categories agreeing**.
 
-### WEAK Signal (⚠️ "Use Stop Loss" alert)
-- **Trend+Strength**: 3 of 4 agree on direction
-- **Momentum**: Opposes direction (2+ opposite)
-- **Basically**: `stop_loss_warning = True` in our consensus logic
-- Current code: Momentum says opposite but Trend+Strength overrides
+#### Per-Category Rules
+| Indicators | Rule |
+|-----------|------|
+| 2 (Trend, Strength) | Both must agree. BUY+NEUTRAL = BUY. BUY+SELL = NEUTRAL (conflict). |
+| 3 (Momentum) | Any BUY+SELL present = NEUTRAL (conflict). 2+ NEUTRAL = NEUTRAL. Otherwise active direction wins. |
+
+#### Overall Signal
+| Scenario | Signal Strength | Stop Loss Warning? |
+|---------|----------------|--------------------|
+| All 3 categories agree (BUY/BUY/BUY or SELL/SELL/SELL) | **STRONG** | No |
+| Trend + Strength agree, Momentum = NEUTRAL | **MEDIUM** | No |
+| Trend + Momentum agree, Strength = NEUTRAL | **MEDIUM** | ⚠️ Yes |
+| Strength + Momentum agree, Trend = NEUTRAL | **MEDIUM** | ⚠️ Yes |
+| 2 agree but 1 **opposes** (e.g. BUY/BUY/SELL) | **NONE** (no trade) | — |
+| Only 1 or 0 categories have direction | **NONE** (no trade) | — |
+
+> **Stop Loss Warning** appears only when Momentum is one of the two agreeing categories and the missing category is either Trend or Strength. When Trend + Strength agree (the two structural categories) and Momentum sits out, confidence is higher — no warning needed.
 
 ---
 
@@ -57,16 +61,9 @@
 | Risk:Reward    | 1:1.2            |
 | Re-entry       | ✅ Yes, after 5-min cooldown |
 | Action         | Buy ATM CE (BUY) or ATM PE (SELL) |
+| ⚠️ Warning     | If `stop_loss_warning = True`, dashboard shows "USE STOP LOSS" alert |
 
-### Rule 3 — Weak Signal
-| Parameter       | Value            |
-|----------------|------------------|
-| Signal Type    | WEAK (⚠️ Use SL) |
-| Target Profit  | **10 pts** (₹)   |
-| Stop Loss      | **8 pts** (₹)    |
-| Risk:Reward    | 1:1.25           |
-| Re-entry       | ❌ No             |
-| Action         | Buy ATM CE (BUY) or ATM PE (SELL) |
+> **Note:** The old WEAK signal no longer exists. The consensus engine now only outputs STRONG, MEDIUM, or NONE. The `stop_loss_warning` flag on MEDIUM signals serves as the caution indicator when Momentum is part of the agreement but one structural category (Trend or Strength) is absent.
 
 ---
 
@@ -137,7 +134,7 @@ lots = min(max_lots, 5)   # Capped at 5 lots
 | EOD forced exit     | **3:15 PM IST**      | All positions closed, no overnight holding   |
 | Cooldown (Strong)   | **5 minutes**        | Wait after SL hit before re-entry            |
 | Cooldown (Medium)   | **5 minutes**        | Wait after SL hit before re-entry            |
-| Cooldown (Weak)     | **No re-entry**      | One shot only                                |
+| Stop loss warning   | **Dashboard alert**  | "USE STOP LOSS" when Momentum agrees but Trend or Strength absent |
 | Max lots per trade  | **5**                | Hard cap regardless of capital               |
 
 
@@ -146,23 +143,40 @@ lots = min(max_lots, 5)   # Capped at 5 lots
 ## 8. Signal Strength Detection (Code Logic)
 
 ```python
-# From server.py consensus logic:
+# From server.py — Category-Level Consensus
 
-trend_signals   = ["MA(5)", "EMA(5,13)"]         # 2 strategies
-momentum_signals = ["RSI(7)", "MACD(5,13,1)", "Stoch(5,3,3)"]  # 3 strategies  
-strength_signals = ["Supertrend(7,2)", "ADX(14)"]  # 2 strategies
+def category_consensus(signals):
+    """
+    2 indicators: both must agree, BUY+NEUTRAL=BUY, conflict=NEUTRAL
+    3 indicators: 2+ neutral=NEUTRAL, any conflict=NEUTRAL, else active direction
+    """
+    buy_c  = signals.count("BUY")
+    sell_c = signals.count("SELL")
+    neutral_c = signals.count("NEUTRAL")
+    if buy_c > 0 and sell_c > 0:       return "NEUTRAL"  # conflict
+    if len(signals) >= 3 and neutral_c >= 2: return "NEUTRAL"  # neutral majority
+    if buy_c > 0:  return "BUY"
+    if sell_c > 0: return "SELL"
+    return "NEUTRAL"
 
-# STRONG: All categories agree
-if trend_all_agree AND momentum_2of3_agree AND strength_all_agree:
-    signal_strength = "STRONG"
+trend_dir    = category_consensus([MA, EMA])              # 2 strategies
+momentum_dir = category_consensus([RSI, MACD, Stoch])     # 3 strategies
+strength_dir = category_consensus([Supertrend, ADX])      # 2 strategies
 
-# MEDIUM: Trend + Strength agree, Momentum neutral
-elif trend_all_agree AND strength_all_agree AND momentum_mostly_neutral:
-    signal_strength = "MEDIUM"
+cat_buy     = [trend_dir, momentum_dir, strength_dir].count("BUY")
+cat_sell    = [trend_dir, momentum_dir, strength_dir].count("SELL")
+cat_neutral = [trend_dir, momentum_dir, strength_dir].count("NEUTRAL")
 
-# WEAK: stop_loss_warning = True (Trend+Strength overrides opposing Momentum)
-elif stop_loss_warning == True:
-    signal_strength = "WEAK"
+# Need 2+ categories on same direction
+if cat_buy >= 2 (or cat_sell >= 2):
+    if all_3_agree:                    → STRONG
+    elif 2_agree + 1_neutral:          → MEDIUM
+        # Stop loss warning if Momentum is one of the two agreeing categories
+        if momentum agrees + (trend OR strength) neutral:
+            stop_loss_warning = True
+    elif 2_agree + 1_opposes:          → NEUTRAL (don't trade)
+else:
+    → NEUTRAL (don't trade)
 ```
 
 ---
@@ -234,5 +248,5 @@ When paper trading proves profitable, flip `mode: "live"`:
 
 ---
 
-*Last updated: 25 Feb 2026*
-*Engine version: 1.0 (Paper Trading)*
+*Last updated: 1 Mar 2026*
+*Engine version: 1.1 (Paper Trading — Category-Level Consensus)*

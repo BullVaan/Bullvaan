@@ -25,11 +25,16 @@ export default function RoleCard({ role, indicators }) {
     const votes = indicators.map((ind) => ind.signal);
     const buyCount = votes.filter((v) => v === 'BUY').length;
     const sellCount = votes.filter((v) => v === 'SELL').length;
+    const neutralCount = votes.filter((v) => v === 'NEUTRAL').length;
     const total = votes.length;
-    const majority = Math.ceil(total / 2);  // Need 2 out of 3, or 2 out of 2
 
-    if (buyCount >= majority) return 'BUY';
-    if (sellCount >= majority) return 'SELL';
+    // If BUY and SELL both present → conflict → NEUTRAL
+    if (buyCount > 0 && sellCount > 0) return 'NEUTRAL';
+    // For 3+ indicators: if NEUTRAL is majority (2+ out of 3) → NEUTRAL
+    if (total >= 3 && neutralCount >= 2) return 'NEUTRAL';
+    // Otherwise the active direction wins
+    if (buyCount > 0) return 'BUY';
+    if (sellCount > 0) return 'SELL';
     return 'NEUTRAL';
   };
 
