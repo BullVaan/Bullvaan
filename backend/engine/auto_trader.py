@@ -109,13 +109,15 @@ class AutoTrader:
     Runs as an async background task inside the FastAPI server.
     """
 
-    def __init__(self, get_signal_fn, get_option_ltp_fn):
+    def __init__(self, get_signal_fn, get_option_ltp_fn, get_atm_strike_fn=None):
         """
         get_signal_fn(symbol) -> dict with: consensus, signal_strength, india_vix
-        get_option_ltp_fn(index_prefix, strike, opt_type) -> float LTP or None
+        get_option_ltp_fn(index_prefix, opt_type, strike=None) -> float LTP or None
+        get_atm_strike_fn(prefix) -> float ATM strike from dashboard, or None
         """
         self.get_signal = get_signal_fn
         self.get_option_ltp = get_option_ltp_fn
+        self.get_atm_strike_from_dashboard = get_atm_strike_fn
         self.enabled = False
         self.running = False
 
@@ -268,12 +270,14 @@ class AutoTrader:
             logger.warning(f"AUTO TRADER KILLED: Daily loss ₹{self._daily_pnl} >= ₹{MAX_DAILY_LOSS}")
             return
 
-        # EOD exit
+        # EOD exit — close all positions and stop engine
         if _is_eod_exit_time():
             for t in self._get_open_trades():
                 ltp = self._get_trade_ltp(t)
                 sell_price = ltp if ltp else t['buy_price']
                 self._execute_sell(t, sell_price, reason="EOD_EXIT")
+            logger.info("Market about to get closed — auto-trader stopping automatically")
+            self.enabled = False
             return
 
         # Not market hours? Skip
@@ -371,7 +375,11 @@ class AutoTrader:
                     continue
 
                 # Determine option name (prefix + ATM strike + type)
-                atm_strike = self._get_atm_strike(prefix)
+                atm_strike = None
+                if self.get_atm_strike_from_dashboard:
+                    atm_strike = self.get_atm_strike_from_dashboard(prefix)
+                if not atm_strike:
+                    atm_strike = self._get_atm_strike(prefix)
                 if not atm_strike:
                     continue
 
