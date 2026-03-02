@@ -21,11 +21,15 @@ kite.set_access_token(access_token)
 
 # =========================
 # KiteTicker: Real-time tick store
+import time as _time
+
 # =========================
 # Shared dict: instrument_token -> tick data (updated by KiteTicker thread)
 _tick_store = {}
 # Map instrument_token -> symbol info for reverse lookup
 _token_map = {}
+# Dashboard-computed ATM options: {"NIFTY": {"atm_strike": 22500, "CE": {"ltp": 150, "token": 123, "tradingsymbol": "..."}, "PE": {...}}, ...}
+_dashboard_options = {}
 # List of asyncio Events to notify WebSocket consumers on new ticks
 _tick_listeners = []
 _kws = None
@@ -34,6 +38,7 @@ def _on_ticks(ws, ticks):
     """Called by KiteTicker on every tick — runs in Twisted thread"""
     for tick in ticks:
         token = tick["instrument_token"]
+        tick["_received_at"] = _time.time()  # track freshness
         _tick_store[token] = tick
     # Notify all async listeners
     for evt in list(_tick_listeners):
@@ -776,17 +781,29 @@ def _auto_get_signal(symbol):
 
 def _auto_get_option_ltp(prefix, opt_type, strike=None):
     """
-    Get live option LTP from KiteTicker tick store.
-    If strike is given, look up that exact instrument.
-    If not, look up the current ATM.
+    Get option LTP for auto-trader.
+    For NEW trades (strike=None): reads from dashboard's live ATM options — same price you see on screen.
+    For EXISTING trades (strike given): calls kite.ltp() API for accurate price on that specific instrument.
     """
     try:
         zerodha_symbol = prefix  # already "NIFTY", "BANKNIFTY", etc.
-        expiry_options, _ = get_near_expiry_options(zerodha_symbol)
         cfg = SYMBOL_CONFIG.get(zerodha_symbol, SYMBOL_CONFIG["NIFTY"])
 
+        # ── NEW TRADE: Use dashboard's live ATM price ──
         if strike is None:
-            # Calculate ATM from spot
+            dash = _dashboard_options.get(zerodha_symbol)
+            if dash and dash.get(opt_type) and dash[opt_type].get("ltp"):
+                price = dash[opt_type]["ltp"]
+                logger.info(f"Auto-trader LTP (dashboard): {zerodha_symbol} ATM {opt_type} = ₹{price}")
+                return price
+            # Dashboard not populated yet — fall back to API
+            logger.warning(f"Auto-trader: dashboard options not available for {zerodha_symbol} {opt_type}, falling back to API")
+
+        # ── EXISTING TRADE or FALLBACK: specific strike ──
+        expiry_options, _ = get_near_expiry_options(zerodha_symbol)
+
+        if strike is None:
+            # Calculate ATM from spot (fallback when dashboard not connected)
             spot_token = _get_spot_token(zerodha_symbol)
             if not spot_token:
                 return None
@@ -807,31 +824,53 @@ def _auto_get_option_ltp(prefix, opt_type, strike=None):
             return None
 
         tok = opt['instrument_token']
-        # Check tick store first
-        tick = get_tick(tok)
-        if tick:
-            return tick["last_price"]
+        ltp_key = f"{cfg['exchange']}:{opt['tradingsymbol']}"
 
-        # Not subscribed yet — subscribe and fetch via API
-        start_ticker({tok: {
-            "name": opt['tradingsymbol'],
-            "key": f"{cfg['exchange']}:{opt['tradingsymbol']}"
-        }})
-        # Try API fallback
+        # 1st priority: KiteTicker live tick (same source as dashboard) — must be fresh
+        tick = get_tick(tok)
+        if tick and tick.get("_received_at") and tick.get("last_price"):
+            age = _time.time() - tick["_received_at"]
+            if age <= 10:
+                return tick["last_price"]
+
+        # 2nd priority: Kite API (fallback if tick missing or stale)
         try:
-            ltp_key = f"{cfg['exchange']}:{opt['tradingsymbol']}"
             ltp_data = kite.ltp(ltp_key)
-            return ltp_data.get(ltp_key, {}).get("last_price")
-        except Exception:
-            return None
+            fresh_price = ltp_data.get(ltp_key, {}).get("last_price")
+            if fresh_price and fresh_price > 0:
+                logger.info(f"Auto-trader LTP (API fallback): {opt['tradingsymbol']} = ₹{fresh_price}")
+                if tok not in _tick_store:
+                    start_ticker({tok: {
+                        "name": opt['tradingsymbol'],
+                        "key": ltp_key
+                    }})
+                return fresh_price
+        except Exception as e:
+            logger.warning(f"Kite API LTP failed for {ltp_key}: {e}")
+
+        # Neither available — ensure subscribed for next tick
+        if tok not in _tick_store:
+            start_ticker({tok: {
+                "name": opt['tradingsymbol'],
+                "key": ltp_key
+            }})
+        return None
     except Exception as e:
         logger.error(f"Auto-trader LTP fetch error: {e}")
         return None
+
+def _auto_get_atm_strike(prefix):
+    """Get ATM strike from dashboard's live options store"""
+    dash = _dashboard_options.get(prefix)
+    if dash and dash.get("atm_strike"):
+        return dash["atm_strike"]
+    return None
 
 # Initialize auto-trader (singleton)
 auto_trader = AutoTrader(
     get_signal_fn=_auto_get_signal,
     get_option_ltp_fn=_auto_get_option_ltp,
+    get_atm_strike_fn=_auto_get_atm_strike,
 )
 
 _near_expiry_cache = {}
@@ -944,6 +983,19 @@ async def ws_options(websocket: WebSocket):
                     if subscribe:
                         start_ticker(subscribe)
                         logger.info(f"Subscribed {len(subscribe)} option tokens for {zerodha_symbol} strike {strike}")
+
+                # ── Update shared dashboard options store for auto-trader ──
+                for tok, info in option_tokens.items():
+                    if info["label"] in ("atm_ce", "atm_pe"):
+                        tick = get_tick(tok)
+                        opt_type = info["type"]  # CE or PE
+                        if zerodha_symbol not in _dashboard_options:
+                            _dashboard_options[zerodha_symbol] = {}
+                        _dashboard_options[zerodha_symbol]["atm_strike"] = strike
+                        _dashboard_options[zerodha_symbol][opt_type] = {
+                            "ltp": tick["last_price"] if tick and tick.get("last_price") else None,
+                            "token": tok,
+                        }
 
                 # ── Track open trade instrument for live LTP ──
                 open_trade_ltp_val = None
