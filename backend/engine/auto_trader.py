@@ -329,6 +329,9 @@ class AutoTrader:
                 # Target hit
                 if ltp >= buy_price + target_pts:
                     self._execute_sell(open_trade, ltp, reason="TARGET_HIT")
+                    # Set cooldown after target hit to prevent rapid re-entry
+                    rule = SIGNAL_RULES.get(trade_strength, SIGNAL_RULES["STRONG"])
+                    self._set_cooldown(prefix, rule["cooldown_minutes"])
                     continue
 
                 # Signal reversal (BUY trade but signal now SELL, or vice versa)

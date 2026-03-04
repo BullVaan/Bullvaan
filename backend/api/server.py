@@ -789,15 +789,21 @@ def _auto_get_option_ltp(prefix, opt_type, strike=None):
         zerodha_symbol = prefix  # already "NIFTY", "BANKNIFTY", etc.
         cfg = SYMBOL_CONFIG.get(zerodha_symbol, SYMBOL_CONFIG["NIFTY"])
 
-        # ── NEW TRADE: Use dashboard's live ATM price ──
+        # ── NEW TRADE: Use dashboard's live ATM price (must be fresh) ──
         if strike is None:
             dash = _dashboard_options.get(zerodha_symbol)
             if dash and dash.get(opt_type) and dash[opt_type].get("ltp"):
-                price = dash[opt_type]["ltp"]
-                logger.info(f"Auto-trader LTP (dashboard): {zerodha_symbol} ATM {opt_type} = ₹{price}")
-                return price
-            # Dashboard not populated yet — fall back to API
-            logger.warning(f"Auto-trader: dashboard options not available for {zerodha_symbol} {opt_type}, falling back to API")
+                updated_at = dash[opt_type].get("_updated_at", 0)
+                age = _time.time() - updated_at
+                if age <= 5:  # only trust prices < 5 seconds old
+                    price = dash[opt_type]["ltp"]
+                    logger.info(f"Auto-trader LTP (dashboard): {zerodha_symbol} ATM {opt_type} = ₹{price} (age={age:.1f}s)")
+                    return price
+                else:
+                    logger.warning(f"Auto-trader: dashboard LTP stale for {zerodha_symbol} {opt_type} (age={age:.1f}s), falling back to API")
+            else:
+                # Dashboard not populated yet — fall back to API
+                logger.warning(f"Auto-trader: dashboard options not available for {zerodha_symbol} {opt_type}, falling back to API")
 
         # ── EXISTING TRADE or FALLBACK: specific strike ──
         expiry_options, _ = get_near_expiry_options(zerodha_symbol)
@@ -995,6 +1001,7 @@ async def ws_options(websocket: WebSocket):
                         _dashboard_options[zerodha_symbol][opt_type] = {
                             "ltp": tick["last_price"] if tick and tick.get("last_price") else None,
                             "token": tok,
+                            "_updated_at": _time.time(),  # freshness timestamp
                         }
 
                 # ── Track open trade instrument for live LTP ──
