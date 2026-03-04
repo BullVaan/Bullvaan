@@ -795,15 +795,15 @@ def _auto_get_option_ltp(prefix, opt_type, strike=None):
             if dash and dash.get(opt_type) and dash[opt_type].get("ltp"):
                 updated_at = dash[opt_type].get("_updated_at", 0)
                 age = _time.time() - updated_at
+                price = dash[opt_type]["ltp"]
                 if age <= 5:  # only trust prices < 5 seconds old
-                    price = dash[opt_type]["ltp"]
-                    logger.info(f"Auto-trader LTP (dashboard): {zerodha_symbol} ATM {opt_type} = ₹{price} (age={age:.1f}s)")
+                    logger.info(f"Auto-trader LTP SOURCE=DASHBOARD_CACHE: {zerodha_symbol} ATM {opt_type} = ₹{price} (tick_age={age:.1f}s) → FRESH")
                     return price
                 else:
-                    logger.warning(f"Auto-trader: dashboard LTP stale for {zerodha_symbol} {opt_type} (age={age:.1f}s), falling back to API")
+                    logger.warning(f"Auto-trader LTP SOURCE=DASHBOARD_CACHE: {zerodha_symbol} {opt_type} = ₹{price} (tick_age={age:.1f}s) → STALE, falling back to API")
             else:
                 # Dashboard not populated yet — fall back to API
-                logger.warning(f"Auto-trader: dashboard options not available for {zerodha_symbol} {opt_type}, falling back to API")
+                logger.warning(f"Auto-trader LTP SOURCE=DASHBOARD_CACHE: {zerodha_symbol} {opt_type} → NO DATA, falling back to API")
 
         # ── EXISTING TRADE or FALLBACK: specific strike ──
         expiry_options, _ = get_near_expiry_options(zerodha_symbol)
@@ -836,15 +836,18 @@ def _auto_get_option_ltp(prefix, opt_type, strike=None):
         tick = get_tick(tok)
         if tick and tick.get("_received_at") and tick.get("last_price"):
             age = _time.time() - tick["_received_at"]
-            if age <= 10:
+            if age <= 5:  # same 5-second freshness as entry
+                logger.info(f"Auto-trader LTP SOURCE=TICK_STORE: {opt['tradingsymbol']} = ₹{tick['last_price']} (tick_age={age:.1f}s) → FRESH")
                 return tick["last_price"]
+            else:
+                logger.warning(f"Auto-trader LTP SOURCE=TICK_STORE: {opt['tradingsymbol']} = ₹{tick['last_price']} (tick_age={age:.1f}s) → STALE, falling back to API")
 
         # 2nd priority: Kite API (fallback if tick missing or stale)
         try:
             ltp_data = kite.ltp(ltp_key)
             fresh_price = ltp_data.get(ltp_key, {}).get("last_price")
             if fresh_price and fresh_price > 0:
-                logger.info(f"Auto-trader LTP (API fallback): {opt['tradingsymbol']} = ₹{fresh_price}")
+                logger.info(f"Auto-trader LTP SOURCE=KITE_API: {opt['tradingsymbol']} = ₹{fresh_price} → REAL-TIME")
                 if tok not in _tick_store:
                     start_ticker({tok: {
                         "name": opt['tradingsymbol'],
@@ -872,11 +875,40 @@ def _auto_get_atm_strike(prefix):
         return dash["atm_strike"]
     return None
 
+def _auto_get_entry_snapshot(prefix, opt_type):
+    """
+    Atomic snapshot: reads ATM strike + LTP from the SAME _dashboard_options state.
+    Returns (atm_strike, ltp) or (None, None) if stale/unavailable.
+    Prevents race condition where ATM shifts between reading price and strike.
+    """
+    dash = _dashboard_options.get(prefix)
+    if not dash:
+        logger.warning(f"Entry snapshot: no dashboard data for {prefix}")
+        return None, None
+
+    atm_strike = dash.get("atm_strike")
+    opt_data = dash.get(opt_type)
+    if not atm_strike or not opt_data or not opt_data.get("ltp"):
+        logger.warning(f"Entry snapshot: incomplete data for {prefix} {opt_type}")
+        return None, None
+
+    # Freshness check — uses tick's actual received time
+    updated_at = opt_data.get("_updated_at", 0)
+    age = _time.time() - updated_at
+    ltp = opt_data["ltp"]
+    if age > 5:
+        logger.warning(f"Entry snapshot STALE: {prefix} {atm_strike} {opt_type} = ₹{ltp} (tick_age={age:.1f}s) → REJECTED, will use API")
+        return None, None
+
+    logger.info(f"Entry snapshot FRESH: {prefix} {atm_strike} {opt_type} = ₹{ltp} (tick_age={age:.1f}s) → USING THIS PRICE")
+    return atm_strike, ltp
+
 # Initialize auto-trader (singleton)
 auto_trader = AutoTrader(
     get_signal_fn=_auto_get_signal,
     get_option_ltp_fn=_auto_get_option_ltp,
     get_atm_strike_fn=_auto_get_atm_strike,
+    get_entry_snapshot_fn=_auto_get_entry_snapshot,
 )
 
 _near_expiry_cache = {}
@@ -998,10 +1030,12 @@ async def ws_options(websocket: WebSocket):
                         if zerodha_symbol not in _dashboard_options:
                             _dashboard_options[zerodha_symbol] = {}
                         _dashboard_options[zerodha_symbol]["atm_strike"] = strike
+                        # Use the tick's ACTUAL received time, not current time
+                        tick_received = tick.get("_received_at", 0) if tick else 0
                         _dashboard_options[zerodha_symbol][opt_type] = {
                             "ltp": tick["last_price"] if tick and tick.get("last_price") else None,
                             "token": tok,
-                            "_updated_at": _time.time(),  # freshness timestamp
+                            "_updated_at": tick_received,  # when KiteTicker ACTUALLY received this price
                         }
 
                 # ── Track open trade instrument for live LTP ──

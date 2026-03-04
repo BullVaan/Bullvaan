@@ -298,7 +298,7 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
                 <div>
                   <div style={{ fontSize: 9, color: '#64748b', letterSpacing: 0.5 }}>LOTS</div>
                   <select
-                    value={selectedLots}
+                    value={hasPosition ? (openTrade.lot || 1) : selectedLots}
                     onChange={(e) => setSelectedLots(Number(e.target.value))}
                     disabled={hasPosition}
                     style={{
@@ -401,7 +401,7 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
                   LTP ₹{livePrice.toFixed(2)}{' '}
                   <span style={{ fontSize: 11 }}>
                     ({livePrice >= openTrade.buy_price ? '+' : ''}
-                    ₹{((livePrice - openTrade.buy_price) * openTrade.lot).toFixed(2)})
+                    ₹{((livePrice - openTrade.buy_price) * (openTrade.quantity || openTrade.lot)).toFixed(2)})
                   </span>
                 </div>
               )}
@@ -412,7 +412,7 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
             }}>
               <div>
                 <div style={{ fontSize: 9, color: '#64748b' }}>QTY</div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0' }}>{openTrade.lot}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0' }}>{openTrade.quantity || openTrade.lot}</div>
               </div>
               <button
                 onClick={() => handleSell(livePrice || openTrade.buy_price)}
