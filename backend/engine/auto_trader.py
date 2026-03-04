@@ -39,16 +39,20 @@ SIGNAL_RULES = {
         "target_pts": 20,
         "sl_pts": 10,
         "allow_reentry": True,
-        "cooldown_minutes": 5,
+        "cooldown_minutes": 3,
     },
     "MEDIUM": {
         "target_pts": 12,
         "sl_pts": 10,
         "allow_reentry": True,
-        "cooldown_minutes": 5,
+        "cooldown_minutes": 3,
     },
 
 }
+
+# Cooldown overrides
+SL_COOLDOWN_MINUTES = 5       # after stop loss
+NEUTRAL_COOLDOWN_MINUTES = 2  # after signal neutral exit  # longer cooldown after stop loss (market went against you)
 
 # Safety limits
 MAX_TRADES_PER_DAY = 15
@@ -56,8 +60,8 @@ MAX_DAILY_LOSS = 5000  # ₹
 MAX_LOTS_PER_TRADE = 5
 TOTAL_CAPITAL = 100000  # ₹1,00,000
 MARKET_OPEN = (9, 20)   # 9:20 AM IST
-MARKET_CLOSE = (15, 15)  # 3:15 PM IST
-EOD_EXIT = (15, 15)      # Force close all at 3:15 PM
+MARKET_CLOSE = (15, 25)  # 3:25 PM IST
+EOD_EXIT = (15, 25)      # Force close all at 3:25 PM
 TEST_MODE = False        # Set True to bypass market hours check
 
 
@@ -109,15 +113,17 @@ class AutoTrader:
     Runs as an async background task inside the FastAPI server.
     """
 
-    def __init__(self, get_signal_fn, get_option_ltp_fn, get_atm_strike_fn=None):
+    def __init__(self, get_signal_fn, get_option_ltp_fn, get_atm_strike_fn=None, get_entry_snapshot_fn=None):
         """
         get_signal_fn(symbol) -> dict with: consensus, signal_strength, india_vix
         get_option_ltp_fn(index_prefix, opt_type, strike=None) -> float LTP or None
         get_atm_strike_fn(prefix) -> float ATM strike from dashboard, or None
+        get_entry_snapshot_fn(prefix, opt_type) -> (atm_strike, ltp) atomic read
         """
         self.get_signal = get_signal_fn
         self.get_option_ltp = get_option_ltp_fn
         self.get_atm_strike_from_dashboard = get_atm_strike_fn
+        self.get_entry_snapshot = get_entry_snapshot_fn
         self.enabled = False
         self.running = False
 
@@ -320,10 +326,8 @@ class AutoTrader:
                 # Stop loss
                 if ltp <= buy_price - sl_pts:
                     pnl = self._execute_sell(open_trade, ltp, reason="STOP_LOSS")
-                    # Set cooldown
-                    rule = SIGNAL_RULES.get(trade_strength, SIGNAL_RULES["STRONG"])
-                    if rule["allow_reentry"]:
-                        self._set_cooldown(prefix, rule["cooldown_minutes"])
+                    # Longer cooldown after SL — market went against you
+                    self._set_cooldown(prefix, SL_COOLDOWN_MINUTES)
                     continue
 
                 # Target hit
@@ -345,6 +349,7 @@ class AutoTrader:
                 # Signal goes NEUTRAL
                 if consensus == 'NEUTRAL':
                     self._execute_sell(open_trade, ltp, reason="SIGNAL_NEUTRAL")
+                    self._set_cooldown(prefix, NEUTRAL_COOLDOWN_MINUTES)
                     continue
 
             # ── ENTRY LOGIC ──
@@ -366,24 +371,31 @@ class AutoTrader:
                 if self._is_on_cooldown(prefix):
                     continue
 
-                # Get ATM option price
+                # Get ATM strike + LTP in one atomic read (no race condition)
                 opt_type = 'CE' if consensus == 'BUY' else 'PE'
-                atm_price = self.get_option_ltp(prefix, opt_type)
-                if not atm_price or atm_price <= 0:
-                    continue
+                atm_strike = None
+                atm_price = None
+
+                # Primary: atomic snapshot from dashboard (strike + price guaranteed from same moment)
+                if self.get_entry_snapshot:
+                    atm_strike, atm_price = self.get_entry_snapshot(prefix, opt_type)
+
+                # Fallback: separate reads (only if dashboard snapshot unavailable)
+                if not atm_price or not atm_strike:
+                    atm_price = self.get_option_ltp(prefix, opt_type)
+                    if not atm_price or atm_price <= 0:
+                        continue
+                    if not atm_strike:
+                        if self.get_atm_strike_from_dashboard:
+                            atm_strike = self.get_atm_strike_from_dashboard(prefix)
+                        if not atm_strike:
+                            atm_strike = self._get_atm_strike(prefix)
+                        if not atm_strike:
+                            continue
 
                 # Capital check
                 lots = self._max_lots(atm_price, lot_size)
                 if lots <= 0:
-                    continue
-
-                # Determine option name (prefix + ATM strike + type)
-                atm_strike = None
-                if self.get_atm_strike_from_dashboard:
-                    atm_strike = self.get_atm_strike_from_dashboard(prefix)
-                if not atm_strike:
-                    atm_strike = self._get_atm_strike(prefix)
-                if not atm_strike:
                     continue
 
                 option_name = f"{prefix} {atm_strike} {opt_type}"
