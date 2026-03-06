@@ -11,7 +11,10 @@ export default function SwingTrade() {
 
   /* ---------------- WS LIVE DATA ---------------- */
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8000/ws/nifty50');
+    const wsHost = window.location.port === '3000'
+      ? `${window.location.hostname}:8000`
+      : window.location.host;
+    const ws = new WebSocket(`ws://${wsHost}/ws/nifty50`);
 
     ws.onmessage = (e) => {
       const res = JSON.parse(e.data);
@@ -84,11 +87,7 @@ export default function SwingTrade() {
     return 'WATCH';
   };
 
-  const volumeColor = (v) => {
-    if (v > 1.5) return '#22c55e'; // strong
-    if (v > 1) return '#3b82f6'; // above avg
-    return '#64748b'; // weak
-  };
+  
 
   /* ---------------- UI ---------------- */
   return (

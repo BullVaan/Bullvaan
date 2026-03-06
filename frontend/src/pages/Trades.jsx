@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 
-const API = 'http://127.0.0.1:8000';
+const API = '';
 
 export default function Trades() {
   const [trades, setTrades] = useState([]);
@@ -78,7 +78,10 @@ export default function Trades() {
 
     // Connect WebSocket
     const connect = () => {
-      const ws = new WebSocket('ws://127.0.0.1:8000/ws/trades');
+      const wsHost = window.location.port === '3000'
+        ? `${window.location.hostname}:8000`
+        : window.location.host;
+      const ws = new WebSocket(`ws://${wsHost}/ws/trades`);
       wsRef.current = ws;
 
       ws.onmessage = (e) => {

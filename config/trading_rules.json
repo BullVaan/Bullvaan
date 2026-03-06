@@ -4,10 +4,10 @@
   "max_daily_loss": 5000,
   "max_trades_per_day": 15,
   "max_lots_per_trade": 5,
-  "market_open": "09:20",
-  "market_close": "15:15",
-  "eod_exit": "15:15",
-  "index_priority": ["NIFTY", "BANKNIFTY", "SENSEX"],
+  "market_open": [9, 20],
+  "market_close": [15, 25],
+  "eod_exit": [15, 25],
+  "index_priority": ["^NSEI", "^NSEBANK", "^BSESN"],
   "lot_sizes": {
     "NIFTY": 65,
     "BANKNIFTY": 30,
@@ -18,19 +18,16 @@
       "target_pts": 20,
       "sl_pts": 10,
       "allow_reentry": true,
-      "cooldown_minutes": 5
+      "cooldown_minutes": 3
     },
     "MEDIUM": {
       "target_pts": 12,
       "sl_pts": 10,
       "allow_reentry": true,
-      "cooldown_minutes": 5
-    },
-    "WEAK": {
-      "target_pts": 10,
-      "sl_pts": 8,
-      "allow_reentry": false,
-      "cooldown_minutes": 0
+      "cooldown_minutes": 3
     }
-  }
+  },
+  "sl_cooldown_minutes": 5,
+  "neutral_cooldown_minutes": 2,
+  "test_mode": false
 }

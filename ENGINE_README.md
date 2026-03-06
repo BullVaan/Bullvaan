@@ -49,7 +49,7 @@
 | Target Profit  | **20 pts** (₹)   |
 | Stop Loss      | **10 pts** (₹)   |
 | Risk:Reward    | 1:2              |
-| Re-entry       | ✅ Yes, after 5-min cooldown |
+| Re-entry       | ✅ Yes, cooldown: 3 min (target), 5 min (SL) |
 | Action         | Buy ATM CE (BUY) or ATM PE (SELL) |
 
 ### Rule 2 — Medium Signal
@@ -59,11 +59,10 @@
 | Target Profit  | **12 pts** (₹)   |
 | Stop Loss      | **10 pts** (₹)   |
 | Risk:Reward    | 1:1.2            |
-| Re-entry       | ✅ Yes, after 5-min cooldown |
+| Re-entry       | ✅ Yes, cooldown: 3 min (target), 5 min (SL) |
 | Action         | Buy ATM CE (BUY) or ATM PE (SELL) |
-| ⚠️ Warning     | If `stop_loss_warning = True`, dashboard shows "USE STOP LOSS" alert |
 
-> **Note:** Only two signal strengths exist: STRONG and MEDIUM. No WEAK signal, no stop-loss warning. Trend + Strength agreement is the non-negotiable foundation.
+> **Note:** Only two signal strengths exist: STRONG and MEDIUM. Trend + Strength agreement is the non-negotiable foundation.
 
 ---
 
@@ -74,10 +73,11 @@ An auto-trade is placed when ALL of the following are true:
 1. Signal strength is STRONG or MEDIUM (not NEUTRAL/NONE)
 2. No open position already exists for that index
 3. Sufficient capital available (ATM price × lot size × lots ≤ available capital)
-4. Current time is between **9:20 AM – 3:15 PM IST**
+4. Current time is between **9:20 AM – 3:25 PM IST**
 5. Daily trade count < 15
 6. Daily loss has not hit the kill switch (₹5,000)
-7. Cooldown period has passed (5 min for Strong/Medium after SL hit)
+7. Cooldown period has passed (5 min after SL, 3 min after target, 2 min after NEUTRAL exit)
+8. 2-tick price confirmation passes (entry price must be consistent across 2 consecutive ticks)
 
 ---
 
@@ -87,12 +87,12 @@ A trade is auto-closed when ANY of the following is true:
 
 | Condition           | Action                                      |
 |---------------------|---------------------------------------------|
-| **Target hit**      | LTP ≥ buy_price + target_pts → SELL         |
+| **Target hit**      | LTP ≥ buy_price + target_pts → SELL + 3min cooldown |
 | **Stop-loss hit**   | LTP ≤ buy_price - sl_pts → SELL + 5min cooldown |
 | **Signal reversal** | BUY→SELL or SELL→BUY → Close (re-enter next tick) |
-| **Signal NEUTRAL**  | Close position                              |
-| **EOD Exit**        | 3:15 PM IST → Close ALL open positions      |
-| **Kill switch**     | Daily loss ≥ ₹5,000 → Close ALL, stop engine|
+| **Signal NEUTRAL**  | Close position + 2min cooldown               |
+| **EOD Exit**        | 3:25 PM IST → Close ALL open positions      |
+| **Kill switch**     | Daily loss ≥ ₹5,000 → Close ALL, block new trades (engine stays in idle loop) |
 | **Manual stop**     | AUTO toggle OFF → Close all auto-traded positions (reason: `MANUAL_STOP`) |
 
 > **Fallback:** If LTP is unavailable during Kill Switch, EOD Exit, or Manual Stop, the engine sells at `buy_price` (flat exit) to avoid positions staying open.
@@ -104,14 +104,12 @@ A trade is auto-closed when ANY of the following is true:
 ### Starting Capital
 - **₹1,00,000** (paper trading)
 
-### Allocation Strategy (Option B)
-| Index      | Lot Size | Default Lots | ~Cost per trade |
-|-----------|----------|-------------|-----------------|
-| NIFTY      | 65       | 3           | ~₹30,000        |
-| BANKNIFTY  | 30       | 1           | ~₹27,000        |
-| SENSEX     | 20       | 3           | ~₹19,000        |
-| **Total**  |          |             | **~₹76,000**    |
-| **Buffer** |          |             | **~₹24,000**    |
+### Allocation Strategy
+| Index      | Lot Size | Max Lots | Lot calculation |
+|-----------|----------|----------|------------------|
+| NIFTY      | 65       | 5        | Dynamic (based on available capital) |
+| BANKNIFTY  | 30       | 5        | Dynamic (based on available capital) |
+| SENSEX     | 20       | 5        | Dynamic (based on available capital) |
 
 ### Dynamic Lot Calculation
 ```
@@ -132,11 +130,12 @@ lots = min(max_lots, 5)   # Capped at 5 lots
 | Control              | Value                | Description                                  |
 |---------------------|----------------------|----------------------------------------------|
 | Max trades/day      | **15**               | No new trades after 15th                     |
-| Max daily loss      | **₹5,000**           | Kill switch — close all, stop engine for day |
-| Market hours only   | **9:20 AM – 3:15 PM**| No trades outside this window                |
-| EOD forced exit     | **3:15 PM IST**      | All positions closed, no overnight holding   |
-| Cooldown (Strong)   | **5 minutes**        | Wait after SL hit before re-entry            |
-| Cooldown (Medium)   | **5 minutes**        | Wait after SL hit before re-entry            |
+| Max daily loss      | **₹5,000**           | Kill switch — close all, block new trades    |
+| Market hours only   | **9:20 AM – 3:25 PM**| No trades outside this window                |
+| EOD forced exit     | **3:25 PM IST**      | All positions closed, no overnight holding   |
+| Cooldown (SL hit)   | **5 minutes**        | Wait after stop-loss before re-entry         |
+| Cooldown (target)   | **3 minutes**        | Wait after target hit before re-entry        |
+| Cooldown (NEUTRAL)  | **2 minutes**        | Wait after NEUTRAL exit before re-entry      |
 | Max lots per trade  | **5**                | Hard cap regardless of capital               |
 
 
@@ -183,29 +182,35 @@ The engine runs as an async background task, ticking **every 2 seconds** (`async
 ```
 Every tick (~2 seconds, real-time via KiteTicker):
 │
-├─ 1. Check time → Is it 9:20 AM – 3:15 PM?
-│     └─ No → If 3:15+ → Close all open positions
+├─ 1. Reset daily counters if new trading day
 │
 ├─ 2. Check kill switch → Daily loss ≥ ₹5,000?
-│     └─ Yes → Close all, stop engine
+│     └─ Yes → Close all, block new trades (idle loop)
 │
-├─ 3. For each index (NIFTY, BANKNIFTY, SENSEX):
+├─ 3. Check EOD → Is it ≥ 3:25 PM?
+│     └─ Yes → Close all open positions
+│
+├─ 4. Check market hours → Is it 9:20 AM – 3:25 PM?
+│     └─ No → Skip trading
+│
+├─ 5. For each index (NIFTY, BANKNIFTY, SENSEX — priority order):
 │     │
-│     ├─ 3a. Has open position?
-│     │     ├─ Check SL → LTP ≤ buy_price - SL → SELL
-│     │     ├─ Check Target → LTP ≥ buy_price + target → SELL
+│     ├─ 5a. Has open position?
+│     │     ├─ Check SL → LTP ≤ buy_price - SL → SELL + 5min cooldown
+│     │     ├─ Check Target → LTP ≥ buy_price + target → SELL + 3min cooldown
 │     │     ├─ Check signal → reversed? → SELL (+ re-enter)
-│     │     └─ Check signal → NEUTRAL? → SELL
+│     │     └─ Check signal → NEUTRAL? → SELL + 2min cooldown
 │     │
-│     └─ 3b. No open position?
+│     └─ 5b. No open position?
 │           ├─ Get signal strength (STRONG/MEDIUM/NEUTRAL)
-│           ├─ Check capital availability
-│           ├─ Check cooldown timer
 │           ├─ Check trade count < 15
-│           ├─ Calculate ATM strike (rounded to nearest 50 for NIFTY, 100 for BANKNIFTY/SENSEX)
+│           ├─ Check cooldown timer
+│           ├─ Calculate ATM strike (nearest 50 for NIFTY, 100 for BANKNIFTY/SENSEX)
+│           ├─ Check capital availability (needs ATM price to calculate lots)
+│           ├─ 2-tick price confirmation (entry price must match across 2 ticks)
 │           └─ All clear? → BUY ATM option
 │
-└─ 4. Log everything → trades.json + console
+└─ 6. Log everything → trades.json + console
 ```
 
 ---
@@ -246,5 +251,5 @@ When paper trading proves profitable, flip `mode: "live"`:
 
 ---
 
-*Last updated: 1 Mar 2026*
+*Last updated: 6 Mar 2026*
 *Engine version: 1.2 (Paper Trading — Trend+Strength Gate)*

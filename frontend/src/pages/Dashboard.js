@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import RoleCard from '../components/RoleCard';
 import OptionSuggestion from '../components/OptionSuggestion';
@@ -8,7 +8,6 @@ import MarketStatus from '../components/MarketStatus';
 function Dashboard() {
   const navigate = useNavigate();
 
-  const [signals, setSignals] = useState([]);
   const [signals_by_role, setSignalsByRole] = useState({});
   const [indices, setIndices] = useState({});
   const [timeframes, setTimeframes] = useState({});
@@ -35,7 +34,7 @@ function Dashboard() {
 
   /* ---------- LOAD INDICES & TIMEFRAMES ---------- */
   useEffect(() => {
-    fetch('http://127.0.0.1:8000/indices')
+    fetch('/indices')
       .then((res) => res.json())
       .then((data) => {
         if (data && typeof data === 'object') {
@@ -46,7 +45,7 @@ function Dashboard() {
       })
       .catch(() => setError('Backend not running'));
 
-    fetch('http://127.0.0.1:8000/timeframes')
+    fetch('/timeframes')
       .then((res) => res.json())
       .then((data) => {
         if (data && typeof data === 'object') {
@@ -57,13 +56,13 @@ function Dashboard() {
   }, []);
 
   /* ---------- FETCH SIGNALS ---------- */
-  const fetchSignals = async (symbol) => {
+  const fetchSignals = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
 
       const res = await fetch(
-        `http://127.0.0.1:8000/signals?symbol=${selectedSymbol}&timeframe=${selectedTimeframe}`
+        `/signals?symbol=${selectedSymbol}&timeframe=${selectedTimeframe}`
       );
 
       const data = await res.json();
@@ -73,7 +72,6 @@ function Dashboard() {
         return;
       }
 
-      setSignals(Array.isArray(data.signals) ? data.signals : []);
       setSignalsByRole(data.signals_by_role || {});
       setConsensus(data.consensus || 'NEUTRAL');
       setPrice(data.price ?? '-');
@@ -91,12 +89,12 @@ function Dashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedSymbol, selectedTimeframe]);
 
   /* ---------- AUTO-TRADER ---------- */
   const fetchAutoStatus = async () => {
     try {
-      const res = await fetch('http://127.0.0.1:8000/auto-trader/status');
+      const res = await fetch('/auto-trader/status');
       const data = await res.json();
       setAutoTrader(data);
     } catch { /* ignore */ }
@@ -106,7 +104,7 @@ function Dashboard() {
     setAutoLoading(true);
     try {
       const endpoint = autoTrader.enabled ? 'stop' : 'start';
-      await fetch(`http://127.0.0.1:8000/auto-trader/${endpoint}`, { method: 'POST' });
+      await fetch(`/auto-trader/${endpoint}`, { method: 'POST' });
       await fetchAutoStatus();
     } catch (e) { console.error('Auto-trader toggle failed', e); }
     setAutoLoading(false);
@@ -114,11 +112,11 @@ function Dashboard() {
 
   /* ---------- AUTO REFRESH ---------- */
   useEffect(() => {
-    fetchSignals(selectedSymbol);
+    fetchSignals();
     fetchAutoStatus();
-    const interval = setInterval(() => fetchSignals(selectedSymbol), 300000);
+    const interval = setInterval(fetchSignals, 300000);
     return () => { clearInterval(interval); };
-  }, [selectedSymbol, selectedTimeframe]);
+  }, [fetchSignals]);
 
   // Poll auto-trader status only while engine is active
   useEffect(() => {

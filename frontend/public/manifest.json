@@ -1,0 +1,15 @@
+{
+  "short_name": "BullVaan",
+  "name": "BullVaan Trading Dashboard",
+  "icons": [
+    {
+      "src": "BullVaan_Logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#1a1a2e",
+  "background_color": "#0f0f23"
+}

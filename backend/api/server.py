@@ -9,6 +9,9 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from kiteconnect import KiteConnect, KiteTicker
 from utils.nse_live import fetch_nse_indices
+from engine import AutoTrader, _invalidate_trades_cache
+from engine.auto_trader import _load_trades, _save_trades
+import yfinance as yf
 
 # Load environment variables
 load_dotenv()
@@ -22,7 +25,7 @@ kite.set_access_token(access_token)
 # =========================
 # KiteTicker: Real-time tick store
 import time as _time
-
+import datetime as _dt
 # =========================
 # Shared dict: instrument_token -> tick data (updated by KiteTicker thread)
 _tick_store = {}
@@ -38,7 +41,30 @@ def _on_ticks(ws, ticks):
     """Called by KiteTicker on every tick — runs in Twisted thread"""
     for tick in ticks:
         token = tick["instrument_token"]
-        tick["_received_at"] = _time.time()  # track freshness
+        tick["_received_at"] = _time.time()  # when we received the packet
+
+        # ── TRUE freshness: when the last trade ACTUALLY happened on the exchange ──
+        # MODE_FULL provides two timestamps:
+        #   exchange_timestamp = when exchange SENT this packet (always recent, useless)
+        #   last_trade_time    = when last ACTUAL TRADE executed (THIS is real freshness)
+        # _received_at is useless — KiteTicker pushes stale last_price every ~1s
+        # even if no new trade happened.
+        last_trade_time = tick.get("last_trade_time")  # datetime from MODE_FULL
+        if last_trade_time:
+            if hasattr(last_trade_time, 'timestamp'):
+                tick["_last_trade_at"] = last_trade_time.timestamp()
+            else:
+                tick["_last_trade_at"] = tick["_received_at"]  # fallback
+        else:
+            # Fallback: Track price changes (MODE_QUOTE/LTP don't have last_trade_time)
+            old_tick = _tick_store.get(token)
+            if old_tick and old_tick.get("last_price") == tick.get("last_price"):
+                # Price unchanged — keep old _last_trade_at (stale)
+                tick["_last_trade_at"] = old_tick.get("_last_trade_at", 0)
+            else:
+                # Price changed — new trade must have happened
+                tick["_last_trade_at"] = tick["_received_at"]
+
         _tick_store[token] = tick
     # Notify all async listeners
     for evt in list(_tick_listeners):
@@ -49,8 +75,8 @@ def _on_connect(ws, response):
     tokens = list(_token_map.keys())
     if tokens:
         ws.subscribe(tokens)
-        ws.set_mode(ws.MODE_QUOTE, tokens)
-        logging.getLogger("api.server").info(f"KiteTicker subscribed to {len(tokens)} tokens")
+        ws.set_mode(ws.MODE_FULL, tokens)  # MODE_FULL gives exchange_timestamp for real trade freshness
+        logging.getLogger("api.server").info(f"KiteTicker subscribed to {len(tokens)} tokens in MODE_FULL")
 
 def _on_close(ws, code, reason):
     logging.getLogger("api.server").warning(f"KiteTicker closed: {code} - {reason}")
@@ -69,7 +95,7 @@ def start_ticker(subscribe_tokens):
         if new_tokens:
             try:
                 _kws.subscribe(new_tokens)
-                _kws.set_mode(_kws.MODE_QUOTE, new_tokens)
+                _kws.set_mode(_kws.MODE_FULL, new_tokens)
             except Exception:
                 pass
         return
@@ -109,20 +135,13 @@ async def wait_for_tick(timeout=2):
 
 
 # strategies
-from strategies.strategy_1_moving_average import MovingAverageStrategy
-from strategies.strategy_2_rsi import RSIStrategy
-from strategies.strategy_3_macd import MACDStrategy
-from strategies.strategy_5_ema_crossover import EMACrossoverStrategy
-from strategies.strategy_6_supertrend import SupertrendStrategy
-from strategies.strategy_8_stochastic import StochasticStrategy
-from strategies.strategy_9_adx import ADXStrategy
+from strategies import (
+    MovingAverageStrategy, RSIStrategy, MACDStrategy,
+    EMACrossoverStrategy, SupertrendStrategy, StochasticStrategy, ADXStrategy
+)
 
-# auto-trading engine
-from engine.auto_trader import AutoTrader
-
-# data utils
-from utils.yahoo_finance import fetch_history, standardize_ohlcv
-import yfinance as yf
+# data utils — Zerodha for strategies (replaced Yahoo Finance)
+from utils import fetch_zerodha_history, fetch_india_vix_zerodha
 
 from api.signup import router as signup_router
 from api.login import router as login_router
@@ -176,6 +195,15 @@ def startup_init_ticker():
             if token:
                 subscribe[token] = {"name": idx["name"], "key": ltp_key}
                 INDEX_TOKENS[token] = {"name": idx["name"], "key": ltp_key}
+                # Seed tick store with quote so ticker bar works before first live tick
+                q = quote[ltp_key]
+                _tick_store[token] = {
+                    "instrument_token": token,
+                    "last_price": q.get("last_price"),
+                    "ohlc": q.get("ohlc", {}),
+                    "_received_at": _time.time(),
+                    "_last_trade_at": _time.time(),
+                }
                 logger.info(f"Index {idx['name']} -> token {token}")
             else:
                 logger.warning(f"No instrument_token in quote for {ltp_key}: {quote[ltp_key]}")
@@ -256,34 +284,8 @@ ACTIVE_TIMEFRAME = "5m"
 # Helper Functions
 # =========================
 def fetch_india_vix():
-    """Fetch live India VIX (volatility index) with real day change"""
-    try:
-        # Fetch both today and yesterday to get proper previous close
-        vix_data = yf.download("^INDIAVIX", period="5d", interval="1d", progress=False, threads=False, auto_adjust=False)
-        
-        if vix_data is not None and not vix_data.empty:
-            # Current price = today's latest close
-            current_vix = float(vix_data['Close'].iloc[-1].item())
-            
-            # Previous close = yesterday's close
-            if len(vix_data) > 1:
-                prev_close_vix = float(vix_data['Close'].iloc[-2].item())
-            else:
-                prev_close_vix = current_vix
-            
-            # Calculate actual day change
-            change = round(current_vix - prev_close_vix, 2)
-            change_pct = round(((current_vix - prev_close_vix) / prev_close_vix) * 100, 2) if prev_close_vix != 0 else 0
-            
-            return {
-                "value": round(current_vix, 2),
-                "change": change,
-                "change_pct": change_pct,
-                "prev_close": round(prev_close_vix, 2)
-            }
-    except Exception as e:
-        logger.error(f"Failed to fetch India VIX: {str(e)}")
-    return {"value": "-", "change": 0, "change_pct": 0, "prev_close": "-"}
+    """Fetch live India VIX from Zerodha"""
+    return fetch_india_vix_zerodha(kite)
 
 def detect_breakout(df):
     if len(df) < 2:
@@ -406,7 +408,7 @@ def fetch_nifty50_movers():
                 "symbol": stock,
                 "price": round(float(current), 2),
                 "percentChange": round(float(change_pct), 2),
-                "priceChange": round(float(price_change), 2),   # ← ADD THIS
+                "priceChange": round(float(price_change), 2), 
                 "volume": volume,
                 "avgVolume": int(avg_vol),
                 "volumeRatio": round(volume_ratio,2),
@@ -451,6 +453,9 @@ def home():
 # =========================
 # Get Signals Route
 # =========================
+_signal_cache = {}  # {symbol: {"result": dict, "timestamp": float}}
+SIGNAL_CACHE_TTL = 300  # 5 minutes — matches the 5m candle timeframe; no point recalculating on incomplete candles
+
 @app.get("/signals")
 def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
     """
@@ -478,15 +483,19 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
         }
 
     try:
-        # fetch market data
-        fetched = fetch_history(symbol)
-        if fetched is None or fetched.df is None:
-            return {"error": f"No data available for {symbol}"}
-        
-        df = standardize_ohlcv(fetched.df)
+        # Return cached signal if fresh (avoids hammering Zerodha API)
+        cache_key = f"{symbol}_{timeframe}"
+        cached = _signal_cache.get(cache_key)
+        if cached and (_time.time() - cached["timestamp"]) < SIGNAL_CACHE_TTL:
+            return cached["result"]
 
-        if df.empty:
-            return {"error": "No market data received"}
+        # fetch market data from Zerodha
+        df = fetch_zerodha_history(
+            kite, symbol, interval="5m", days=5,
+            get_spot_token_fn=_get_spot_token
+        )
+        if df is None or df.empty:
+            return {"error": f"No data available for {symbol}"}
 
         # current price
         current_price = float(df["close"].iloc[-1])
@@ -583,7 +592,7 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
             # else: Momentum opposes → NEUTRAL (no trade)
 
         # response
-        return {
+        result = {
             "symbol": symbol,
             "index_name": SUPPORTED_INDICES[symbol],
             "timeframe": timeframe,
@@ -600,6 +609,8 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
             "signals": all_signals,
             "signals_by_role": signals_by_role
         }
+        _signal_cache[cache_key] = {"result": result, "timestamp": _time.time()}
+        return result
 
     except RuntimeError as e:
         # Handle fetch failures gracefully
@@ -627,7 +638,7 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
 
 
 # =========================
-# Zerodha Options Chain - February Expiry
+# Zerodha Options Chain - Near Expiry
 # =========================
 @app.get("/options")
 def get_options(symbol: str = "NIFTY", strike: int = None):
@@ -783,11 +794,16 @@ def _auto_get_option_ltp(prefix, opt_type, strike=None):
     """
     Get option LTP for auto-trader.
     For NEW trades (strike=None): reads from dashboard's live ATM options — same price you see on screen.
-    For EXISTING trades (strike given): calls kite.ltp() API for accurate price on that specific instrument.
+    For EXISTING trades (strike given): uses tick store then kite.quote() API for that specific instrument.
+
+    IMPORTANT: For entries (strike=None), we NEVER use kite.quote() API.
+    kite.quote() returns last_traded_price which can be seconds old — enough for
+    options to move 30-40% in a volatile market. Only live tick data is trusted for entries.
     """
     try:
         zerodha_symbol = prefix  # already "NIFTY", "BANKNIFTY", etc.
         cfg = SYMBOL_CONFIG.get(zerodha_symbol, SYMBOL_CONFIG["NIFTY"])
+        is_entry = (strike is None)  # True if this is a NEW entry, False if monitoring existing trade
 
         # ── NEW TRADE: Use dashboard's live ATM price (must be fresh) ──
         if strike is None:
@@ -796,14 +812,14 @@ def _auto_get_option_ltp(prefix, opt_type, strike=None):
                 updated_at = dash[opt_type].get("_updated_at", 0)
                 age = _time.time() - updated_at
                 price = dash[opt_type]["ltp"]
-                if age <= 5:  # only trust prices < 5 seconds old
-                    logger.info(f"Auto-trader LTP SOURCE=DASHBOARD_CACHE: {zerodha_symbol} ATM {opt_type} = ₹{price} (tick_age={age:.1f}s) → FRESH")
+                if age <= 5:  # only trust if last ACTUAL TRADE on exchange was < 5 seconds ago
+                    logger.info(f"Auto-trader LTP SOURCE=DASHBOARD_CACHE: {zerodha_symbol} ATM {opt_type} = ₹{price} (trade_age={age:.1f}s) → FRESH")
                     return price
                 else:
-                    logger.warning(f"Auto-trader LTP SOURCE=DASHBOARD_CACHE: {zerodha_symbol} {opt_type} = ₹{price} (tick_age={age:.1f}s) → STALE, falling back to API")
+                    logger.warning(f"Auto-trader LTP SOURCE=DASHBOARD_CACHE: {zerodha_symbol} {opt_type} = ₹{price} (trade_age={age:.1f}s) → STALE, falling back")
             else:
-                # Dashboard not populated yet — fall back to API
-                logger.warning(f"Auto-trader LTP SOURCE=DASHBOARD_CACHE: {zerodha_symbol} {opt_type} → NO DATA, falling back to API")
+                # Dashboard not populated yet — fall back
+                logger.warning(f"Auto-trader LTP SOURCE=DASHBOARD_CACHE: {zerodha_symbol} {opt_type} → NO DATA, falling back")
 
         # ── EXISTING TRADE or FALLBACK: specific strike ──
         expiry_options, _ = get_near_expiry_options(zerodha_symbol)
@@ -832,30 +848,58 @@ def _auto_get_option_ltp(prefix, opt_type, strike=None):
         tok = opt['instrument_token']
         ltp_key = f"{cfg['exchange']}:{opt['tradingsymbol']}"
 
-        # 1st priority: KiteTicker live tick (same source as dashboard) — must be fresh
+        # 1st priority: KiteTicker live tick — must have RECENT ACTUAL TRADE on exchange
         tick = get_tick(tok)
-        if tick and tick.get("_received_at") and tick.get("last_price"):
-            age = _time.time() - tick["_received_at"]
-            if age <= 5:  # same 5-second freshness as entry
-                logger.info(f"Auto-trader LTP SOURCE=TICK_STORE: {opt['tradingsymbol']} = ₹{tick['last_price']} (tick_age={age:.1f}s) → FRESH")
+        if tick and tick.get("_last_trade_at") and tick.get("last_price"):
+            trade_age = _time.time() - tick["_last_trade_at"]
+            # Entries: strict 5s. Exits: allow 10s (missing SL is worse than slightly stale price)
+            max_age = 5 if is_entry else 10
+            if trade_age <= max_age:
+                logger.info(f"Auto-trader LTP SOURCE=TICK_STORE: {opt['tradingsymbol']} = ₹{tick['last_price']} (trade_age={trade_age:.1f}s, max={max_age}s) → FRESH")
                 return tick["last_price"]
             else:
-                logger.warning(f"Auto-trader LTP SOURCE=TICK_STORE: {opt['tradingsymbol']} = ₹{tick['last_price']} (tick_age={age:.1f}s) → STALE, falling back to API")
+                logger.warning(f"Auto-trader LTP SOURCE=TICK_STORE: {opt['tradingsymbol']} = ₹{tick['last_price']} (trade_age={trade_age:.1f}s, max={max_age}s) → STALE")
 
-        # 2nd priority: Kite API (fallback if tick missing or stale)
+        # ── ENTRY: STOP HERE — never use API for entries ──
+        # kite.quote() returns last_traded_price which can be from seconds ago.
+        # In volatile markets, options can move 30-40% in 10-30 seconds.
+        # Subscribe to ticker so we get fresh data on next cycle, then skip.
+        if is_entry:
+            if tok not in _tick_store:
+                start_ticker({tok: {"name": opt['tradingsymbol'], "key": ltp_key}})
+                logger.info(f"Auto-trader ENTRY SKIP: {opt['tradingsymbol']} — no live tick, subscribed for next cycle")
+            else:
+                logger.info(f"Auto-trader ENTRY SKIP: {opt['tradingsymbol']} — tick stale, waiting for fresh tick")
+            return None
+
+        # ── EXIT ONLY: Kite API quote (last resort for monitoring open positions) ──
+        # For exits, slightly stale price is acceptable — missing an exit is worse.
+        # Window tightened to 10 seconds (was 30s).
         try:
-            ltp_data = kite.ltp(ltp_key)
-            fresh_price = ltp_data.get(ltp_key, {}).get("last_price")
+            quote_data = kite.quote(ltp_key)
+            quote = quote_data.get(ltp_key, {})
+            fresh_price = quote.get("last_price")
+            last_trade_time = quote.get("last_trade_time")  # datetime object from Zerodha
+
             if fresh_price and fresh_price > 0:
-                logger.info(f"Auto-trader LTP SOURCE=KITE_API: {opt['tradingsymbol']} = ₹{fresh_price} → REAL-TIME")
-                if tok not in _tick_store:
-                    start_ticker({tok: {
-                        "name": opt['tradingsymbol'],
-                        "key": ltp_key
-                    }})
-                return fresh_price
+                if last_trade_time:
+                    now_ist = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=5, minutes=30)))
+                    if hasattr(last_trade_time, 'tzinfo') and last_trade_time.tzinfo is None:
+                        last_trade_time = last_trade_time.replace(tzinfo=_dt.timezone(_dt.timedelta(hours=5, minutes=30)))
+                    trade_age = (now_ist - last_trade_time).total_seconds()
+
+                    if trade_age <= 10:
+                        logger.info(f"Auto-trader LTP SOURCE=KITE_QUOTE (EXIT): {opt['tradingsymbol']} = ₹{fresh_price} (last_trade={trade_age:.0f}s ago) → FRESH")
+                        if tok not in _tick_store:
+                            start_ticker({tok: {"name": opt['tradingsymbol'], "key": ltp_key}})
+                        return fresh_price
+                    else:
+                        logger.warning(f"Auto-trader LTP SOURCE=KITE_QUOTE (EXIT): {opt['tradingsymbol']} = ₹{fresh_price} (last_trade={trade_age:.0f}s ago) → STALE, skipping")
+                else:
+                    # No last_trade_time — NEVER blindly trust. Skip.
+                    logger.warning(f"Auto-trader LTP SOURCE=KITE_QUOTE (EXIT): {opt['tradingsymbol']} = ₹{fresh_price} (no trade_time) → UNTRUSTED, skipping")
         except Exception as e:
-            logger.warning(f"Kite API LTP failed for {ltp_key}: {e}")
+            logger.warning(f"Kite API quote failed for {ltp_key}: {e}")
 
         # Neither available — ensure subscribed for next tick
         if tok not in _tick_store:
@@ -868,12 +912,6 @@ def _auto_get_option_ltp(prefix, opt_type, strike=None):
         logger.error(f"Auto-trader LTP fetch error: {e}")
         return None
 
-def _auto_get_atm_strike(prefix):
-    """Get ATM strike from dashboard's live options store"""
-    dash = _dashboard_options.get(prefix)
-    if dash and dash.get("atm_strike"):
-        return dash["atm_strike"]
-    return None
 
 def _auto_get_entry_snapshot(prefix, opt_type):
     """
@@ -892,22 +930,21 @@ def _auto_get_entry_snapshot(prefix, opt_type):
         logger.warning(f"Entry snapshot: incomplete data for {prefix} {opt_type}")
         return None, None
 
-    # Freshness check — uses tick's actual received time
+    # Freshness check — uses ACTUAL TRADE TIME on exchange, not packet delivery time
     updated_at = opt_data.get("_updated_at", 0)
     age = _time.time() - updated_at
     ltp = opt_data["ltp"]
-    if age > 5:
-        logger.warning(f"Entry snapshot STALE: {prefix} {atm_strike} {opt_type} = ₹{ltp} (tick_age={age:.1f}s) → REJECTED, will use API")
+    if age > 15:
+        logger.warning(f"Entry snapshot STALE: {prefix} {atm_strike} {opt_type} = ₹{ltp} (trade_age={age:.1f}s) → SKIPPED, waiting for fresh tick")
         return None, None
 
-    logger.info(f"Entry snapshot FRESH: {prefix} {atm_strike} {opt_type} = ₹{ltp} (tick_age={age:.1f}s) → USING THIS PRICE")
+    logger.info(f"Entry snapshot FRESH: {prefix} {atm_strike} {opt_type} = ₹{ltp} (trade_age={age:.1f}s) → USING THIS PRICE")
     return atm_strike, ltp
 
 # Initialize auto-trader (singleton)
 auto_trader = AutoTrader(
     get_signal_fn=_auto_get_signal,
     get_option_ltp_fn=_auto_get_option_ltp,
-    get_atm_strike_fn=_auto_get_atm_strike,
     get_entry_snapshot_fn=_auto_get_entry_snapshot,
 )
 
@@ -1030,12 +1067,12 @@ async def ws_options(websocket: WebSocket):
                         if zerodha_symbol not in _dashboard_options:
                             _dashboard_options[zerodha_symbol] = {}
                         _dashboard_options[zerodha_symbol]["atm_strike"] = strike
-                        # Use the tick's ACTUAL received time, not current time
-                        tick_received = tick.get("_received_at", 0) if tick else 0
+                        # Use the tick's ACTUAL TRADE TIME on exchange (from MODE_FULL)
+                        last_trade_at = tick.get("_last_trade_at", 0) if tick else 0
                         _dashboard_options[zerodha_symbol][opt_type] = {
                             "ltp": tick["last_price"] if tick and tick.get("last_price") else None,
                             "token": tok,
-                            "_updated_at": tick_received,  # when KiteTicker ACTUALLY received this price
+                            "_updated_at": last_trade_at,  # when last ACTUAL TRADE happened on the exchange
                         }
 
                 # ── Track open trade instrument for live LTP ──
@@ -1338,8 +1375,6 @@ def nifty50_movers():
 
 @app.get("/history")
 def get_history(symbol: str):
-    import yfinance as yf
-
     df = yf.download(symbol + ".NS", period="1d", interval="5m")
 
     return [
@@ -1391,7 +1426,6 @@ def get_candles(symbol: str, interval: str = "5m"):
             return out
         else:
             # fallback to yfinance for stocks
-            import yfinance as yf
             yf_symbol = symbol + ".NS"
             df = yf.download(
                 yf_symbol,
@@ -1479,8 +1513,6 @@ def _on_ticks(ws, ticks):
                     for interval in ['1m', '5m', '15m']:
                         _aggregate_tick_to_candle(sym, tick, interval)
 
-# Replace the original _on_ticks
-globals()['_on_ticks'] = _on_ticks
 
 @app.websocket("/ws/candles/{symbol}/{interval}")
 async def ws_candles(websocket: WebSocket, symbol: str, interval: str):
@@ -1521,29 +1553,6 @@ async def ws_candles(websocket: WebSocket, symbol: str, interval: str):
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         print("candle client disconnected")
-
-
-# =========================
-# Trades: Manual Trade Log
-# =========================
-TRADES_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'trades.json')
-
-def _ensure_trades_file():
-    """Create trades file and directory if they don't exist"""
-    os.makedirs(os.path.dirname(TRADES_FILE), exist_ok=True)
-    if not os.path.exists(TRADES_FILE):
-        with open(TRADES_FILE, 'w') as f:
-            json.dump([], f)
-
-def _load_trades():
-    _ensure_trades_file()
-    with open(TRADES_FILE, 'r') as f:
-        return json.load(f)
-
-def _save_trades(trades):
-    _ensure_trades_file()
-    with open(TRADES_FILE, 'w') as f:
-        json.dump(trades, f, indent=2)
 
 @app.get("/trades/active")
 def get_active_trades():
