@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const API = 'http://127.0.0.1:8000';
+const API = '';
 
 export default function OptionSuggestion({ signal, price, symbol, autoEnabled = false }) {
 
@@ -86,7 +86,10 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
   useEffect(() => {
     let reconnectTimer;
     const connect = () => {
-      const ws = new WebSocket('ws://127.0.0.1:8000/ws/options');
+      const wsHost = window.location.port === '3000'
+        ? `${window.location.hostname}:8000`
+        : window.location.host;
+      const ws = new WebSocket(`ws://${wsHost}/ws/options`);
       wsRef.current = ws;
       ws.onopen = () => { ws.send(JSON.stringify({ symbol })); setConnected(true); setError(''); };
       ws.onmessage = (event) => {
@@ -99,13 +102,6 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
     };
     connect();
     return () => { clearTimeout(reconnectTimer); if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); } };
-  }, []);
-
-  useEffect(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      setLoading(true);
-      wsRef.current.send(JSON.stringify({ symbol }));
-    }
   }, [symbol]);
 
   // ── Filter options ──
@@ -123,12 +119,15 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
 
   const { atm, otm } = getFilteredOptions();
   const best = atm;
+  const bestStrike = best?.strike;
+  const bestType = best?.type;
+  const bestLtp = best?.ltp;
 
   useEffect(() => {
-    if (signal !== 'NEUTRAL' && best) {
-      lastRecommendationRef.current = { signal, strike: best.strike, type: best.type, ltp: best.ltp };
+    if (signal !== 'NEUTRAL' && bestStrike != null) {
+      lastRecommendationRef.current = { signal, strike: bestStrike, type: bestType, ltp: bestLtp };
     }
-  }, [signal, best?.strike, best?.type, best?.ltp]);
+  }, [signal, bestStrike, bestType, bestLtp]);
 
   const getOpenTradeLivePrice = () => {
     if (!openTrade || !options) return null;

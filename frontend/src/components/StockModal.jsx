@@ -81,7 +81,7 @@ export default function StockModal({ stock, onClose }) {
     chart.priceScale('').applyOptions({
       scaleMargins: { top: 0.8, bottom: 0 }
     });
-    fetch(`http://localhost:8000/candles?symbol=${stock.symbol}&interval=${tf}`)
+    fetch(`/candles?symbol=${stock.symbol}&interval=${tf}`)
       .then((res) => res.json())
       .then((data) => {
         candleSeries.setData(data);

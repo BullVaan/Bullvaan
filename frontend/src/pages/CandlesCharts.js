@@ -22,7 +22,7 @@ export default function CandlesCharts() {
   useEffect(() => {
     setLoading(true);
     setError('');
-    fetch(`http://localhost:8000/candles?symbol=${symbol}&interval=${tf}`)
+    fetch(`/candles?symbol=${symbol}&interval=${tf}`)
       .then((res) => res.json())
       .then((data) => {
         setLoading(false);

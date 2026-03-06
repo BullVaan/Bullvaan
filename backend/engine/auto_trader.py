@@ -16,6 +16,15 @@ logger = logging.getLogger("auto_trader")
 # ─────────────────────────────────────────────
 # Config
 # ─────────────────────────────────────────────
+# Load config from trading_rules.json
+_CONFIG_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'trading_rules.json')
+
+def _load_config():
+    with open(_CONFIG_FILE, 'r') as f:
+        return json.load(f)
+
+_config = _load_config()
+
 TRADES_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'trades.json')
 
 SYMBOL_MAP_REVERSE = {
@@ -24,46 +33,19 @@ SYMBOL_MAP_REVERSE = {
     "^BSESN": "SENSEX",
 }
 
-LOT_SIZES = {
-    "NIFTY": 65,
-    "BANKNIFTY": 30,
-    "SENSEX": 20,
-}
-
-# Priority order when capital is limited
-INDEX_PRIORITY = ["^NSEI", "^NSEBANK", "^BSESN"]
-
-# Signal strength → trading params
-SIGNAL_RULES = {
-    "STRONG": {
-        "target_pts": 20,
-        "sl_pts": 10,
-        "allow_reentry": True,
-        "cooldown_minutes": 3,
-    },
-    "MEDIUM": {
-        "target_pts": 12,
-        "sl_pts": 10,
-        "allow_reentry": True,
-        "cooldown_minutes": 3,
-    },
-
-}
-
-# Cooldown overrides
-SL_COOLDOWN_MINUTES = 5       # after stop loss
-NEUTRAL_COOLDOWN_MINUTES = 2  # after signal neutral exit  # longer cooldown after stop loss (market went against you)
-
-# Safety limits
-MAX_TRADES_PER_DAY = 15
-MAX_DAILY_LOSS = 5000  # ₹
-MAX_LOTS_PER_TRADE = 5
-TOTAL_CAPITAL = 100000  # ₹1,00,000
-MARKET_OPEN = (9, 20)   # 9:20 AM IST
-MARKET_CLOSE = (15, 25)  # 3:25 PM IST
-EOD_EXIT = (15, 25)      # Force close all at 3:25 PM
-TEST_MODE = False        # Set True to bypass market hours check
-
+LOT_SIZES = _config["lot_sizes"]
+INDEX_PRIORITY = _config["index_priority"]
+SIGNAL_RULES = _config["signal_rules"]
+SL_COOLDOWN_MINUTES = _config["sl_cooldown_minutes"]
+NEUTRAL_COOLDOWN_MINUTES = _config["neutral_cooldown_minutes"]
+MAX_TRADES_PER_DAY = _config["max_trades_per_day"]
+MAX_DAILY_LOSS = _config["max_daily_loss"]
+MAX_LOTS_PER_TRADE = _config["max_lots_per_trade"]
+TOTAL_CAPITAL = _config["total_capital"]
+MARKET_OPEN = tuple(_config["market_open"])
+MARKET_CLOSE = tuple(_config["market_close"])
+EOD_EXIT = tuple(_config["eod_exit"])
+TEST_MODE = _config.get("test_mode", False)
 
 def _ist_now():
     """Get current IST datetime"""
@@ -92,19 +74,33 @@ def _is_eod_exit_time():
     return (h > EOD_EXIT[0]) or (h == EOD_EXIT[0] and m >= EOD_EXIT[1])
 
 
+_trades_cache = None
+
 def _load_trades():
+    global _trades_cache
+    if _trades_cache is not None:
+        return _trades_cache
     os.makedirs(os.path.dirname(TRADES_FILE), exist_ok=True)
     if not os.path.exists(TRADES_FILE):
         with open(TRADES_FILE, 'w') as f:
             json.dump([], f)
     with open(TRADES_FILE, 'r') as f:
-        return json.load(f)
+        _trades_cache = json.load(f)
+    return _trades_cache
 
 
 def _save_trades(trades):
+    global _trades_cache
     os.makedirs(os.path.dirname(TRADES_FILE), exist_ok=True)
     with open(TRADES_FILE, 'w') as f:
         json.dump(trades, f, indent=2)
+    _trades_cache = trades
+
+
+def _invalidate_trades_cache():
+    """Call when trades.json is modified outside auto_trader (e.g. manual trade via API)"""
+    global _trades_cache
+    _trades_cache = None
 
 
 class AutoTrader:
@@ -113,22 +109,21 @@ class AutoTrader:
     Runs as an async background task inside the FastAPI server.
     """
 
-    def __init__(self, get_signal_fn, get_option_ltp_fn, get_atm_strike_fn=None, get_entry_snapshot_fn=None):
+    def __init__(self, get_signal_fn, get_option_ltp_fn, get_entry_snapshot_fn=None):
         """
         get_signal_fn(symbol) -> dict with: consensus, signal_strength, india_vix
         get_option_ltp_fn(index_prefix, opt_type, strike=None) -> float LTP or None
-        get_atm_strike_fn(prefix) -> float ATM strike from dashboard, or None
         get_entry_snapshot_fn(prefix, opt_type) -> (atm_strike, ltp) atomic read
         """
         self.get_signal = get_signal_fn
         self.get_option_ltp = get_option_ltp_fn
-        self.get_atm_strike_from_dashboard = get_atm_strike_fn
         self.get_entry_snapshot = get_entry_snapshot_fn
         self.enabled = False
         self.running = False
 
         # Per-index state
         self._cooldowns = {}      # {prefix: datetime when cooldown expires}
+        self._pending_entries = {} # {prefix: {"price": float, "opt_type": str, "strike": float}} — price confirmation
 
         self._daily_trade_count = 0
         self._daily_pnl = 0.0
@@ -356,6 +351,7 @@ class AutoTrader:
             else:
                 # Skip if NEUTRAL or no strength
                 if consensus == 'NEUTRAL' or strength == 'NONE':
+                    self._pending_entries.pop(prefix, None)  # clear stale pending
                     continue
 
                 # Get rule for this signal strength
@@ -376,22 +372,17 @@ class AutoTrader:
                 atm_strike = None
                 atm_price = None
 
-                # Primary: atomic snapshot from dashboard (strike + price guaranteed from same moment)
+                # ONLY use atomic snapshot — strike + price guaranteed from same moment.
+                # NEVER fall back to separate reads: get_option_ltp calculates its own ATM
+                # from spot, while get_atm_strike reads from dashboard — these can be
+                # DIFFERENT strikes, causing catastrophic price/strike mismatch
+                # (e.g., buying "79900 CE" at 80800 CE's price of ₹900).
                 if self.get_entry_snapshot:
                     atm_strike, atm_price = self.get_entry_snapshot(prefix, opt_type)
 
-                # Fallback: separate reads (only if dashboard snapshot unavailable)
                 if not atm_price or not atm_strike:
-                    atm_price = self.get_option_ltp(prefix, opt_type)
-                    if not atm_price or atm_price <= 0:
-                        continue
-                    if not atm_strike:
-                        if self.get_atm_strike_from_dashboard:
-                            atm_strike = self.get_atm_strike_from_dashboard(prefix)
-                        if not atm_strike:
-                            atm_strike = self._get_atm_strike(prefix)
-                        if not atm_strike:
-                            continue
+                    # No fresh atomic snapshot — skip entry, wait for next cycle
+                    continue
 
                 # Capital check
                 lots = self._max_lots(atm_price, lot_size)
@@ -399,6 +390,34 @@ class AutoTrader:
                     continue
 
                 option_name = f"{prefix} {atm_strike} {opt_type}"
+
+                # ── PRICE CONFIRMATION: require 2 consecutive similar readings ──
+                # Prevents buying at stale/spike prices. If the price moved more
+                # than SL_PTS between two consecutive readings, wait for stability.
+                pending = self._pending_entries.get(prefix)
+                sl_pts = rule["sl_pts"]
+                if pending and pending["opt_type"] == opt_type and pending["strike"] == atm_strike:
+                    price_diff = abs(atm_price - pending["price"])
+                    if price_diff > sl_pts:
+                        # Price moved too much between readings — update and wait
+                        self._pending_entries[prefix] = {"price": atm_price, "opt_type": opt_type, "strike": atm_strike}
+                        logger.warning(
+                            f"PRICE UNSTABLE: {option_name} prev=₹{pending['price']} now=₹{atm_price} "
+                            f"diff=₹{price_diff:.2f} > SL={sl_pts} → WAITING"
+                        )
+                        continue
+                    else:
+                        # Price confirmed — safe to enter
+                        logger.info(
+                            f"PRICE CONFIRMED: {option_name} prev=₹{pending['price']} now=₹{atm_price} "
+                            f"diff=₹{price_diff:.2f} ≤ SL={sl_pts} → ENTERING"
+                        )
+                        del self._pending_entries[prefix]
+                else:
+                    # First reading for this option — store and wait for confirmation
+                    self._pending_entries[prefix] = {"price": atm_price, "opt_type": opt_type, "strike": atm_strike}
+                    logger.info(f"PRICE PENDING: {option_name} = ₹{atm_price} → waiting for confirmation next cycle")
+                    continue
 
                 # Execute!
                 self._execute_buy(prefix, option_name, atm_price, lots, lot_size, strength, rule)
@@ -413,21 +432,6 @@ class AutoTrader:
         except Exception:
             return None
 
-    def _get_atm_strike(self, prefix):
-        """Get current ATM strike from signal/tick data"""
-        try:
-            sym_map = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK", "SENSEX": "^BSESN"}
-            symbol = sym_map.get(prefix)
-            if not symbol:
-                return None
-            sig = self.get_signal(symbol)
-            if not sig or 'error' in sig:
-                return None
-            spot_price = sig.get('price', 0)
-            interval = {"NIFTY": 50, "BANKNIFTY": 100, "SENSEX": 100}.get(prefix, 50)
-            return round(spot_price / interval) * interval
-        except Exception:
-            return None
 
     # ─── Start / Stop ─────────────────────────────
 
@@ -446,7 +450,8 @@ class AutoTrader:
             pass
         finally:
             self.running = False
-            logger.info("Auto-trader engine STOPPED")
+            if not self.enabled:
+                logger.info("Auto-trader engine STOPPED")
 
     def start(self, loop=None):
         """Start the engine as an async task"""

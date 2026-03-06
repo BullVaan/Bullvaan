@@ -1524,5 +1524,36 @@
     "target_pts": 12,
     "sl_pts": 10,
     "exit_reason": "STOP_LOSS"
+  },
+  {
+    "id": 1772191479653,
+    "name": "BANKNIFTY 57800 PE",
+    "lot": 3,
+    "quantity": 90,
+    "buy_price": 1019.4,
+    "sell_price": 1034.95,
+    "pnl": 1399.5,
+    "status": "closed",
+    "date": "2026-03-06",
+    "buy_time": "15:12",
+    "sell_time": "15:12",
+    "auto": true,
+    "signal_strength": "MEDIUM",
+    "target_pts": 12,
+    "sl_pts": 10,
+    "exit_reason": "TARGET_HIT"
+  },
+  {
+    "id": 1772807328233,
+    "date": "2026-03-06",
+    "name": "BANKNIFTY 57800 PE",
+    "lot": 3,
+    "quantity": 90,
+    "buy_price": 1014.0,
+    "sell_price": 1020.4,
+    "buy_time": "15:28",
+    "sell_time": "15:29",
+    "pnl": 576.0,
+    "status": "closed"
   }
 ]

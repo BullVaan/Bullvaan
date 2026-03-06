@@ -66,6 +66,8 @@ class StochasticStrategy(BaseStrategy):
         
         # Get latest values
         latest_k = df_copy['stoch_k'].iloc[-1]
+        latest_d = df_copy['stoch_d'].iloc[-1]
+        latest_price = df_copy['close'].iloc[-1]
         
         # Handle NaN values
         if pd.isna(latest_k):
@@ -73,8 +75,19 @@ class StochasticStrategy(BaseStrategy):
         
         # Generate signal
         if latest_k < 20:
-            return "BUY"  # Oversold
+            signal = "BUY"
         elif latest_k > 80:
-            return "SELL"  # Overbought
+            signal = "SELL"
         else:
-            return "NEUTRAL"
+            signal = "NEUTRAL"
+        
+        # Update internal state
+        metadata = {
+            'stoch_k': round(latest_k, 2),
+            'stoch_d': round(latest_d, 2) if not pd.isna(latest_d) else None,
+            'condition': 'oversold' if latest_k < 20 else 'overbought' if latest_k > 80 else 'neutral'
+        }
+        
+        self.update_signal(signal, latest_price, **metadata)
+        
+        return signal
