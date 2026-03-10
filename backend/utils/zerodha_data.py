@@ -7,8 +7,11 @@ Uses kite.historical_data() which is reliable and consistent with live ticks.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+# IST = UTC+5:30
+IST = timezone(timedelta(hours=5, minutes=30))
 
 import pandas as pd
 
@@ -84,8 +87,8 @@ def fetch_zerodha_history(
             logger.error(f"No instrument token for {zerodha_name}")
             return None
 
-        # Fetch historical data
-        to_date = datetime.now()
+        # Fetch historical data (use IST — Zerodha expects Indian time)
+        to_date = datetime.now(IST)
         from_date = to_date - timedelta(days=days)
 
         candles = kite.historical_data(token, from_date, to_date, kite_interval)
