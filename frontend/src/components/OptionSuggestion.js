@@ -102,6 +102,13 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
     };
     connect();
     return () => { clearTimeout(reconnectTimer); if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); } };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Send new symbol on change (without reconnecting) ──
+  useEffect(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ symbol }));
+    }
   }, [symbol]);
 
   // ── Filter options ──

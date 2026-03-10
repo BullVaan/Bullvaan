@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import RoleCard from '../components/RoleCard';
 import OptionSuggestion from '../components/OptionSuggestion';
@@ -56,7 +56,7 @@ function Dashboard() {
   }, []);
 
   /* ---------- FETCH SIGNALS ---------- */
-  const fetchSignals = useCallback(async () => {
+  const fetchSignals = async () => {
     try {
       setLoading(true);
       setError('');
@@ -89,7 +89,7 @@ function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [selectedSymbol, selectedTimeframe]);
+  };
 
   /* ---------- AUTO-TRADER ---------- */
   const fetchAutoStatus = async () => {
@@ -116,7 +116,7 @@ function Dashboard() {
     fetchAutoStatus();
     const interval = setInterval(fetchSignals, 300000);
     return () => { clearInterval(interval); };
-  }, [fetchSignals]);
+  }, [selectedSymbol, selectedTimeframe]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll auto-trader status only while engine is active
   useEffect(() => {
@@ -426,23 +426,21 @@ function Dashboard() {
       )}
 
       {/* OPTION SUGGESTION CARDS */}
-      {!loading && (
-        <div style={{ 
-          width: '100%', 
-          display: 'flex', 
-          justifyContent: 'center', 
-          gap: 20,
-          padding: '0 30px',
-          flexWrap: 'wrap'
-        }}>
-          <OptionSuggestion
-            signal={consensus}
-            price={parseFloat(price)}
-            symbol={selectedSymbol}
-            autoEnabled={autoTrader.enabled}
-          />
-        </div>
-      )}
+      <div style={{ 
+        width: '100%', 
+        display: loading ? 'none' : 'flex', 
+        justifyContent: 'center', 
+        gap: 20,
+        padding: '0 30px',
+        flexWrap: 'wrap'
+      }}>
+        <OptionSuggestion
+          signal={consensus}
+          price={parseFloat(price)}
+          symbol={selectedSymbol}
+          autoEnabled={autoTrader.enabled}
+        />
+      </div>
 
       {/* AUTO-TRADER CONTROL PANEL */}
       {!loading && (
