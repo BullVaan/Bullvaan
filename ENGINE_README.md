@@ -227,6 +227,16 @@ Every tick (~2 seconds, real-time via KiteTicker):
   - Manual trades are untouched
   - Manual BUY/SELL buttons re-enabled
 
+### Background Option Subscriber
+
+A background async task (`_subscribe_all_index_options`) starts automatically on server startup. It runs independently of the dashboard:
+
+- **Runs every 5 seconds**, loops through all 3 indices (NIFTY, BANKNIFTY, SENSEX)
+- For each index: reads spot price from tick store → calculates ATM strike → subscribes ATM CE/PE tokens to KiteTicker → updates `_dashboard_options` from tick store
+- This ensures the auto-trader has fresh option prices for **all indices**, not just the one currently viewed on the dashboard
+- The frontend WebSocket still updates `_dashboard_options` for the viewed index (every ~1s, fresher) — the background task fills in the other two
+- No dependency on browser being open or on any specific page
+
 ---
 
 ## 11. Paper Trading Mode
@@ -251,5 +261,5 @@ When paper trading proves profitable, flip `mode: "live"`:
 
 ---
 
-*Last updated: 6 Mar 2026*
-*Engine version: 1.2 (Paper Trading — Trend+Strength Gate)*
+*Last updated: 11 Mar 2026*
+*Engine version: 1.3 (Paper Trading — Background Option Subscriber)*
