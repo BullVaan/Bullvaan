@@ -132,9 +132,9 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
 
   useEffect(() => {
     if (signal !== 'NEUTRAL' && bestStrike != null) {
-      lastRecommendationRef.current = { signal, strike: bestStrike, type: bestType, ltp: bestLtp };
+      lastRecommendationRef.current = { signal, strike: bestStrike, type: bestType, ltp: bestLtp, symbol };
     }
-  }, [signal, bestStrike, bestType, bestLtp]);
+  }, [signal, bestStrike, bestType, bestLtp, symbol]);
 
   const getOpenTradeLivePrice = () => {
     if (!openTrade || !options) return null;
@@ -437,7 +437,7 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
           </>
 
         /* ── NEUTRAL + no trade + had prev signal: disabled ── */
-        ) : signal === 'NEUTRAL' && !hasPosition && lastRecommendationRef.current ? (
+        ) : signal === 'NEUTRAL' && !hasPosition && lastRecommendationRef.current && lastRecommendationRef.current.symbol === symbol ? (
           <div style={{ textAlign: 'center', opacity: 0.4, filter: 'grayscale(0.5)' }}>
             <div style={{ fontSize: 9, color: '#475569', letterSpacing: 1, marginBottom: 4 }}>
               LAST SIGNAL — DISABLED

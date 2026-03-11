@@ -215,6 +215,52 @@ def startup_init_ticker():
         logger.info(f"KiteTicker started with {len(subscribe)} index tokens")
 
 
+async def _subscribe_all_index_options():
+    """Keep _dashboard_options populated for ALL indices so auto-trader can trade any index"""
+    await asyncio.sleep(5)
+    while True:
+        for zerodha_symbol, cfg in SYMBOL_CONFIG.items():
+            try:
+                spot_token = _get_spot_token(zerodha_symbol)
+                if not spot_token:
+                    continue
+                spot_tick = get_tick(spot_token)
+                if not spot_tick or not spot_tick.get("last_price"):
+                    continue
+
+                spot = spot_tick["last_price"]
+                strike = round(spot / cfg["interval"]) * cfg["interval"]
+
+                expiry_options, _ = get_near_expiry_options(zerodha_symbol)
+                if not expiry_options:
+                    continue
+
+                for opt_type in ["CE", "PE"]:
+                    opt = next((i for i in expiry_options if i['strike'] == strike and i['instrument_type'] == opt_type), None)
+                    if not opt:
+                        continue
+                    tok = opt['instrument_token']
+                    if tok not in _tick_store:
+                        start_ticker({tok: {"name": opt['tradingsymbol'], "key": f"{cfg['exchange']}:{opt['tradingsymbol']}"}})
+
+                    tick = get_tick(tok)
+                    if tick and tick.get("last_price"):
+                        if zerodha_symbol not in _dashboard_options:
+                            _dashboard_options[zerodha_symbol] = {}
+                        _dashboard_options[zerodha_symbol]["atm_strike"] = strike
+                        _dashboard_options[zerodha_symbol][opt_type] = {
+                            "ltp": tick["last_price"],
+                            "token": tok,
+                            "_updated_at": tick.get("_last_trade_at", 0),
+                        }
+            except Exception as e:
+                logger.error(f"BG option subscriber error for {zerodha_symbol}: {e}")
+        await asyncio.sleep(5)
+
+@app.on_event("startup")
+async def startup_option_subscriber():
+    asyncio.create_task(_subscribe_all_index_options())
+
 
 # Supported Indices
 # =========================

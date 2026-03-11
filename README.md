@@ -167,8 +167,9 @@ python test_zerodha.py
 - **In-memory trades cache** to avoid disk I/O on every tick
 - **2-tick price confirmation** before auto-entry
 - **Category gate:** Momentum alone can never trigger a trade
+- **Background option subscriber** keeps ATM option prices fresh for all 3 indices (NIFTY, BANKNIFTY, SENSEX) every 5s — auto-trader works on any index regardless of which one the dashboard is viewing
 - **`trading_rules.json`** is the single source of truth for strategy parameters
 
 ---
 
-*Last updated: 6 Mar 2026*
+*Last updated: 11 Mar 2026*
