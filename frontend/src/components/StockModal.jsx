@@ -47,12 +47,17 @@ export default function StockModal({ stock, onClose }) {
 
   /* ---------- CHART ---------- */
   useEffect(() => {
-    if (!stock) return;
+    if (!stock || !chartContainerRef.current) return;
+
+    // Cleanup previous chart
     if (chartInstance.current && chartInstance.current.remove) {
       try {
         chartInstance.current.remove();
-      } catch (e) {}
+      } catch (e) {
+        console.error('Chart cleanup error:', e);
+      }
     }
+
     const chart = createChart(chartContainerRef.current, {
       height: 300,
       layout: {
@@ -66,6 +71,7 @@ export default function StockModal({ stock, onClose }) {
       timeScale: { timeVisible: true }
     });
     chartInstance.current = chart;
+
     /* CANDLES */
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#22c55e',
@@ -73,6 +79,7 @@ export default function StockModal({ stock, onClose }) {
       wickUpColor: '#22c55e',
       wickDownColor: '#ef4444'
     });
+
     /* VOLUME */
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
@@ -81,26 +88,71 @@ export default function StockModal({ stock, onClose }) {
     chart.priceScale('').applyOptions({
       scaleMargins: { top: 0.8, bottom: 0 }
     });
+
+    /* Fetch candle data */
     fetch(`/candles?symbol=${stock.symbol}&interval=${tf}`)
       .then((res) => res.json())
-      .then((data) => {
-        candleSeries.setData(data);
-        if (data[0] && data[0].volume !== undefined) {
-          volumeSeries.setData(
-            data.map((d) => ({
-              time: d.time,
-              value: d.volume,
-              color: d.close > d.open ? '#22c55e' : '#ef4444'
-            }))
-          );
+      .then((rawData) => {
+        // Filter out invalid data items
+        const validData = rawData.filter(
+          (d) =>
+            d &&
+            typeof d === 'object' &&
+            d.time !== undefined &&
+            d.open !== undefined &&
+            d.high !== undefined &&
+            d.low !== undefined &&
+            d.close !== undefined
+        );
+
+        if (validData.length === 0) {
+          console.warn('No valid candle data received');
+          return;
         }
-        drawSRLines(chart, data);
+
+        // Set candlestick data
+        try {
+          candleSeries.setData(validData);
+        } catch (e) {
+          console.error('Error setting candle data:', e);
+        }
+
+        // Set volume data if available
+        if (validData[0] && validData[0].volume !== undefined) {
+          try {
+            volumeSeries.setData(
+              validData.map((d) => ({
+                time: d.time,
+                value: d.volume,
+                color: d.close > d.open ? '#22c55e' : '#ef4444'
+              }))
+            );
+          } catch (e) {
+            console.error('Error setting volume data:', e);
+          }
+        }
+
+        // Draw S/R lines
+        drawSRLines(chart, validData);
+
+        // Fit content to view
+        try {
+          chart.timeScale().fitContent();
+        } catch (e) {
+          console.error('Error fitting chart content:', e);
+        }
+      })
+      .catch((err) => {
+        console.error('Fetch candle data error:', err);
       });
+
     return () => {
       if (chartInstance.current && chartInstance.current.remove) {
         try {
           chartInstance.current.remove();
-        } catch (e) {}
+        } catch (e) {
+          console.error('Chart cleanup error:', e);
+        }
       }
     };
   }, [stock, tf]);

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import StockModal from '../components/StockModal';
+import PremarketSignals from '../components/PremarketSignals';
 
 export default function SwingTrade() {
   const [stocks, setStocks] = useState([]);
@@ -11,9 +12,10 @@ export default function SwingTrade() {
 
   /* ---------------- WS LIVE DATA ---------------- */
   useEffect(() => {
-    const wsHost = window.location.port === '3000'
-      ? `${window.location.hostname}:8000`
-      : window.location.host;
+    const wsHost =
+      window.location.port === '3000'
+        ? `${window.location.hostname}:8000`
+        : window.location.host;
     const ws = new WebSocket(`ws://${wsHost}/ws/nifty50`);
 
     ws.onmessage = (e) => {
@@ -87,8 +89,6 @@ export default function SwingTrade() {
     return 'WATCH';
   };
 
-  
-
   /* ---------------- UI ---------------- */
   return (
     <div style={{ padding: 24, color: 'white' }}>
@@ -131,6 +131,9 @@ export default function SwingTrade() {
       <div style={{ marginBottom: 10, fontSize: 13, color: '#22c55e' }}>
         ● LIVE DATA (updates every 10s)
       </div>
+
+      {/* PREMARKET SIGNALS */}
+      <PremarketSignals symbol="^NSEI" />
 
       {/* TABLE */}
       <div
