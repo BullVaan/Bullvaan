@@ -1158,7 +1158,6 @@ class PremarketBacktester:
 6. ⏳ **TODO:** Add backtesting module
 7. ⏳ **TODO:** Create premarket alerts for strong signals
 
-
 # Premarket Signals - Quick Start Guide
 
 ## 🚀 Get Started in 2 Minutes
@@ -1443,3 +1442,23 @@ You now have:
 ✅ Full API documentation  
 ✅ Frontend integration
 
+Last 30 mins candles → Calculate 4 signals
+↓
+
+1. Closing Strength (35% weight)
+   - How many candles close in upper half?
+   - > 65% = Strong bullish, <35% = Strong bearish
+2. Support/Resistance (25% weight)
+   - Check if current close breaks key levels
+   - Breakout = Bullish, Breakdown = Bearish
+
+3. Sector Sentiment (25% weight)
+   - For NIFTY: ratio of gainers in stock list
+   - > 65% gainers = Bullish, <35% = Bearish
+
+4. Volume Trend (15% weight)
+   - Is volume increasing or decreasing?
+   - More volume = Stronger signal
+
+Total Score → Probability (50-75%)
+Recommendation based on probability & direction
