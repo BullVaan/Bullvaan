@@ -193,7 +193,7 @@ class AutoTrader:
 
     # ─── Trade execution (paper) ──────────────────
 
-    def _execute_buy(self, prefix, option_name, buy_price, lots, lot_size, signal_strength, rule):
+    def _execute_buy(self, prefix, option_name, buy_price, lots, lot_size, signal_strength, rule, sig=None):
         """Paper buy — writes to trades.json"""
         ist = _ist_now()
         quantity = lots * lot_size
@@ -217,6 +217,8 @@ class AutoTrader:
             "signal_strength": signal_strength,
             "target_pts": rule["target_pts"],
             "sl_pts": rule["sl_pts"],
+            "india_vix": sig.get('india_vix', {}).get('value', '-') if sig else '-',
+            "strategies": sig.get('signals', []) if sig else [],
         }
 
         trades.append(trade)
@@ -420,7 +422,7 @@ class AutoTrader:
                     continue
 
                 # Execute!
-                self._execute_buy(prefix, option_name, atm_price, lots, lot_size, strength, rule)
+                self._execute_buy(prefix, option_name, atm_price, lots, lot_size, strength, rule, sig=sig)
 
     def _get_trade_ltp(self, trade):
         """Get live LTP for an open trade's specific instrument"""
