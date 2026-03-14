@@ -1,15 +1,11 @@
 """
 NSE Live Index Data Fetcher
-Fetches near real-time index prices via yfinance fast_info
-Uses parallel fetching for lower latency (~0.5-1s total instead of 3-4s sequential)
-Cached for 1 second to balance freshness vs API load
+Fetches real-time index prices via Zerodha KiteTicker
+Uses live tick store populated by KiteTicker for NIFTY, Bank Nifty, Sensex
 """
 
 import time
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
@@ -23,97 +19,19 @@ TICKER_SYMBOLS = {
 # Cache
 _cache: list[dict] = []
 _cache_time: float = 0
-CACHE_TTL = 1  # seconds (reduced from 2)
+CACHE_TTL = 1  # seconds
 
 
-def _fetch_single_ticker(symbol: str, name: str) -> dict:
-    """Fetch a single ticker's data (runs in thread)."""
-    try:
-        ticker = yf.Ticker(symbol)
-        
-        # Try fast_info first
-        try:
-            info = ticker.fast_info
-            
-            # fast_info returns a dict-like object, handle both dict and object access
-            if info and isinstance(info, dict):
-                price = info.get("last_price")
-                prev = info.get("previous_close")
-            elif info:
-                # Try object attribute access
-                price = getattr(info, "last_price", None)
-                prev = getattr(info, "previous_close", None)
-            else:
-                price = None
-                prev = None
-                
-            if price and prev:
-                change = price - prev
-                change_pct = (change / prev) * 100
-                return {
-                    "symbol": symbol,
-                    "name": name,
-                    "price": round(price, 2),
-                    "change": round(change, 2),
-                    "change_pct": round(change_pct, 2),
-                    "prev_close": round(prev, 2),
-                }
-            else:
-                return {
-                    "symbol": symbol,
-                    "name": name,
-                    "price": round(price, 2) if price else None,
-                    "change": None,
-                    "change_pct": None,
-                }
-        except (AttributeError, TypeError, KeyError) as e:
-            logger.debug(f"fast_info failed for {symbol}, trying info()...")
-            
-            # Fallback to info()
-            try:
-                all_info = ticker.info
-                if all_info:
-                    price = all_info.get("currentPrice")
-                    prev = all_info.get("previousClose")
-                    
-                    if price and prev:
-                        change = price - prev
-                        change_pct = (change / prev) * 100
-                        return {
-                            "symbol": symbol,
-                            "name": name,
-                            "price": round(price, 2),
-                            "change": round(change, 2),
-                            "change_pct": round(change_pct, 2),
-                            "prev_close": round(prev, 2),
-                        }
-            except Exception as info_err:
-                logger.debug(f"info() also failed for {symbol}: {info_err}")
-            
-            # Return None data if both methods fail
-            return {
-                "symbol": symbol,
-                "name": name,
-                "price": None,
-                "change": None,
-                "change_pct": None,
-            }
-            
-    except Exception as e:
-        logger.warning(f"Failed to fetch {symbol}: {str(e)}")
-        return {
-            "symbol": symbol,
-            "name": name,
-            "price": None,
-            "change": None,
-            "change_pct": None,
-        }
-
-
-def fetch_nse_indices() -> list[dict]:
+def fetch_nse_indices(tick_store=None, index_tokens=None) -> list[dict]:
     """
-    Fetch index prices using yfinance fast_info with parallel requests.
-    Results cached for 1 second.
+    Fetch index prices from Zerodha KiteTicker live tick store.
+    
+    Args:
+        tick_store: Dict of {token: tick_data} from KiteTicker
+        index_tokens: Dict of {token: {name, key}} mapping
+    
+    Returns:
+        List of index price dicts cached for 1 second
     """
     global _cache, _cache_time
 
@@ -123,20 +41,71 @@ def fetch_nse_indices() -> list[dict]:
 
     results = []
     
-    # Parallel fetch all tickers
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {
-            executor.submit(_fetch_single_ticker, symbol, name): symbol
-            for symbol, name in TICKER_SYMBOLS.items()
-        }
+    # If no tick store provided, return cached or empty
+    if not tick_store or not index_tokens:
+        logger.warning("tick_store or index_tokens not provided to fetch_nse_indices")
+        return []
+
+    # Map token to symbol info
+    # Index tokens like: {256265: {name: "Nifty 50", key: "NSE:NIFTY 50"}, ...}
+    token_to_symbol = {}
+    for token, info in index_tokens.items():
+        name = info.get("name", "Unknown")
+        key = info.get("key", "")
         
-        for future in as_completed(futures):
-            results.append(future.result())
-    
-    # Sort to maintain consistent order (Nifty, Bank Nifty, Sensex)
-    symbol_order = list(TICKER_SYMBOLS.keys())
-    results.sort(key=lambda x: symbol_order.index(x["symbol"]))
+        # Map to our TICKER_SYMBOLS keys
+        if "NIFTY 50" in name.upper() or "NIFTY" in key.upper():
+            token_to_symbol[token] = ("^NSEI", "Nifty 50")
+        elif "BANK" in name.upper() or "NIFTY BANK" in key.upper():
+            token_to_symbol[token] = ("^NSEBANK", "Bank Nifty")
+        elif "SENSEX" in name.upper() or "SENSEX" in key.upper():
+            token_to_symbol[token] = ("^BSESN", "Sensex")
+
+    # Query tick store for each index
+    for token, (symbol, display_name) in token_to_symbol.items():
+        try:
+            tick = tick_store.get(token)
+            
+            if tick and tick.get("last_price"):
+                last_price = tick.get("last_price")
+                ohlc = tick.get("ohlc", {})
+                prev_close = ohlc.get("close", last_price)
+                
+                if prev_close:
+                    change = last_price - prev_close
+                    change_pct = (change / prev_close) * 100
+                else:
+                    change = 0
+                    change_pct = 0
+                
+                results.append({
+                    "symbol": symbol,
+                    "name": display_name,
+                    "price": round(last_price, 2),
+                    "change": round(change, 2),
+                    "change_pct": round(change_pct, 2),
+                    "prev_close": round(prev_close, 2),
+                })
+            else:
+                results.append({
+                    "symbol": symbol,
+                    "name": display_name,
+                    "price": None,
+                    "change": None,
+                    "change_pct": None,
+                })
+                
+        except Exception as e:
+            logger.warning(f"Failed to fetch tick data for {display_name}: {str(e)}")
+            results.append({
+                "symbol": symbol,
+                "name": display_name,
+                "price": None,
+                "change": None,
+                "change_pct": None,
+            })
 
     _cache = results
     _cache_time = time.time()
     return results
+

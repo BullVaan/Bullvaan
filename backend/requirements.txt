@@ -12,7 +12,6 @@ pandas==2.3.3
 numpy==2.2.6
 
 # Market Data
-yfinance==1.2.0
 curl_cffi==0.13.0
 
 # Technical Analysis
