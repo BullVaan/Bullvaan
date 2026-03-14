@@ -8,7 +8,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Landmark,
-  ListOrderedIcon
+  ListOrderedIcon,
+  TrendingUp
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -18,18 +19,23 @@ export default function Sidebar() {
 
   const menu = [
     {
-      name: 'Dashboard (F&O)',
+      name: 'Dashboard',
       path: '/dashboard',
       icon: <LayoutDashboard size={24} />
     },
-    { name: 'Orders', path: '/trades', icon: <ListOrderedIcon size={24} /> },
     {
-      name: 'Stocks',
+      name: 'Active Orders',
+      path: '/trades',
+      icon: <ListOrderedIcon size={24} />
+    },
+    {
+      name: 'Stock Screener',
       path: '/swing-trade',
       icon: <Landmark size={24} />
     },
+    { name: 'Next Move', path: '/next-move', icon: <TrendingUp size={24} /> },
     {
-      name: 'Charts',
+      name: 'Charting',
       path: '/candles-charts',
       icon: <BarChart3 size={24} />
     },
@@ -40,7 +46,7 @@ export default function Sidebar() {
   return (
     <div
       style={{
-        width: open ? 240 : 80,
+        width: open ? 220 : 80,
         background: '#020617',
         height: '100vh',
         borderRight: '1px solid #334155',
