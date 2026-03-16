@@ -1744,11 +1744,30 @@ async def ws_candles(websocket: WebSocket, symbol: str, interval: str):
         print("candle client disconnected")
 
 @app.get("/trades/active")
-def get_active_trades():
-    """Get all open (bought but not yet sold) trades"""
+def get_active_trades(date: str = None):
+    """Get trades for a specific date (or today if not provided). Shows both open and closed trades."""
     trades = _load_trades()
-    open_trades = [t for t in trades if t.get('status') == 'open']
-    return {"trades": open_trades}
+    
+    # Get the date to fetch
+    if date is None:
+        ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        date = ist_now.strftime('%Y-%m-%d')
+    
+    # Return all trades from the specified date (both open and closed)
+    date_trades = [t for t in trades if t.get('date') == date]
+    
+    # Calculate P&L by mode
+    real_pnl = sum(t.get('pnl', 0) for t in date_trades if (t.get('mode') or 'paper') == 'real')
+    paper_pnl = sum(t.get('pnl', 0) for t in date_trades if (t.get('mode') or 'paper') == 'paper')
+    
+    return {
+        "trades": date_trades,
+        "date": date,
+        "pnl_by_mode": {
+            "real": round(real_pnl, 2),
+            "paper": round(paper_pnl, 2)
+        }
+    }
 
 @app.post("/trades/live-ltp")
 def get_trades_live_ltp(body: dict = Body(...)):

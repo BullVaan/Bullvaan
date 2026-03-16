@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import SwingTrade from './pages/SwingTrade';
 import MainLayout from './layout/MainLayout';
 import Trades from './pages/Trades';
+import ActiveOrders from './pages/ActiveOrders';
 import History from './pages/History';
 import Settings from './pages/Settings';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -39,6 +40,14 @@ function App() {
           />
           <Route
             path="/trades"
+            element={
+              <ProtectedRoute>
+                <ActiveOrders />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/trades-history"
             element={
               <ProtectedRoute>
                 <Trades />

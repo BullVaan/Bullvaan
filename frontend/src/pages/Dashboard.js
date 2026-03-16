@@ -534,6 +534,7 @@ function Dashboard() {
           price={parseFloat(price)}
           symbol={selectedSymbol}
           autoEnabled={autoTrader.enabled}
+          tradingMode={tradingMode}
         />
       </div>
 
