@@ -24,8 +24,15 @@ function Dashboard() {
   });
   const [atr, setAtr] = useState('-');
   const [error, setError] = useState('');
-  const [autoTrader, setAutoTrader] = useState({ enabled: false, running: false });
+  const [autoTrader, setAutoTrader] = useState({
+    enabled: false,
+    running: false
+  });
   const [autoLoading, setAutoLoading] = useState(false);
+  const [tradingMode, setTradingMode] = useState('paper'); // paper or real
+  const [showModeWarning, setShowModeWarning] = useState(false);
+  const [pendingMode, setPendingMode] = useState(null);
+  const [modeLoading, setModeLoading] = useState(false);
   /* ---------- AUTH CHECK ---------- */
   useEffect(() => {
     const auth = localStorage.getItem('auth');
@@ -97,7 +104,10 @@ function Dashboard() {
       const res = await fetch('/auto-trader/status');
       const data = await res.json();
       setAutoTrader(data);
-    } catch { /* ignore */ }
+      setTradingMode(data.trading_mode || 'paper');
+    } catch {
+      /* ignore */
+    }
   };
 
   const toggleAutoTrader = async () => {
@@ -106,8 +116,70 @@ function Dashboard() {
       const endpoint = autoTrader.enabled ? 'stop' : 'start';
       await fetch(`/auto-trader/${endpoint}`, { method: 'POST' });
       await fetchAutoStatus();
-    } catch (e) { console.error('Auto-trader toggle failed', e); }
+    } catch (e) {
+      console.error('Auto-trader toggle failed', e);
+    }
     setAutoLoading(false);
+  };
+
+  /* ---------- TRADING MODE TOGGLE ---------- */
+  const initiateModeSwitchOp = (newMode) => {
+    if (newMode === 'real' && autoTrader.enabled) {
+      // Warn user that engine is running
+      alert('Please stop the autotrader before switching to real money mode');
+      return;
+    }
+    setPendingMode(newMode);
+    if (newMode === 'real') {
+      setShowModeWarning(true);
+    } else {
+      confirmModeSwitch(newMode);
+    }
+  };
+
+  const confirmModeSwitch = async (newMode) => {
+    setModeLoading(true);
+    try {
+      const res = await fetch('/auto-trader/trading-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: newMode })
+      });
+      const data = await res.json();
+
+      console.log(
+        'Mode switch response:',
+        data,
+        'Status from res:',
+        res.status
+      );
+
+      if (data.status === 'ok') {
+        setTradingMode(newMode);
+        if (newMode === 'real') {
+          const balance = data.account_balance
+            ? `₹${data.account_balance}`
+            : 'N/A';
+          alert(`✓ Switched to REAL MONEY mode\nAvailable Balance: ${balance}`);
+        } else {
+          alert('✓ Switched back to PAPER TRADING mode');
+        }
+        await fetchAutoStatus();
+      } else {
+        const errorMsg =
+          data.message ||
+          data.error ||
+          `Request failed with status: ${data.status}`;
+        alert(`❌ Error: ${errorMsg}`);
+      }
+    } catch (e) {
+      console.error('Mode switch error:', e);
+      alert(`Error switching trading mode: ${e.message || 'Network error'}`);
+    } finally {
+      setShowModeWarning(false);
+      setModeLoading(false);
+      setPendingMode(null);
+    }
   };
 
   /* ---------- AUTO REFRESH ---------- */
@@ -115,7 +187,9 @@ function Dashboard() {
     fetchSignals();
     fetchAutoStatus();
     const interval = setInterval(fetchSignals, 300000);
-    return () => { clearInterval(interval); };
+    return () => {
+      clearInterval(interval);
+    };
   }, [selectedSymbol, selectedTimeframe]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll auto-trader status only while engine is active
@@ -134,7 +208,14 @@ function Dashboard() {
         : '#eab308';
 
   return (
-    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+    <div
+      style={{
+        width: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center'
+      }}
+    >
       {/* HEADER - Market Status centered */}
       <div
         style={{
@@ -156,7 +237,14 @@ function Dashboard() {
       </div>
 
       {/* SELECT INDEX & TIMEFRAME */}
-      <div style={{ width: '100%', maxWidth: 1100, textAlign: 'center', padding: 20 }}>
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 1100,
+          textAlign: 'center',
+          padding: 20
+        }}
+      >
         <div
           style={{
             display: 'flex',
@@ -220,7 +308,6 @@ function Dashboard() {
             >
               {consensus}
             </div>
-
           </div>
 
           {/* Timeframe Selector */}
@@ -275,19 +362,25 @@ function Dashboard() {
               {selectedTimeframe === '5m' && (
                 <>
                   <div>⚡ Quick entries, exit in 5-15 mins</div>
-                  <div style={{ marginTop: 4 }}>🎯 Target: 10-20 pts | SL: 10 pts</div>
+                  <div style={{ marginTop: 4 }}>
+                    🎯 Target: 10-20 pts | SL: 10 pts
+                  </div>
                 </>
               )}
               {selectedTimeframe === '15m' && (
                 <>
                   <div>📊 Hold 15-45 mins for trend</div>
-                  <div style={{ marginTop: 4 }}>🎯 Target: 30-50 pts | SL: 20 pts</div>
+                  <div style={{ marginTop: 4 }}>
+                    🎯 Target: 30-50 pts | SL: 20 pts
+                  </div>
                 </>
               )}
               {selectedTimeframe === '30m' && (
                 <>
                   <div>🔄 Swing-scalp, hold 30-90 mins</div>
-                  <div style={{ marginTop: 4 }}>🎯 Target: 50-100 pts | SL: 30 pts</div>
+                  <div style={{ marginTop: 4 }}>
+                    🎯 Target: 50-100 pts | SL: 30 pts
+                  </div>
                 </>
               )}
             </div>
@@ -426,14 +519,16 @@ function Dashboard() {
       )}
 
       {/* OPTION SUGGESTION CARDS */}
-      <div style={{ 
-        width: '100%', 
-        display: loading ? 'none' : 'flex', 
-        justifyContent: 'center', 
-        gap: 20,
-        padding: '0 30px',
-        flexWrap: 'wrap'
-      }}>
+      <div
+        style={{
+          width: '100%',
+          display: loading ? 'none' : 'flex',
+          justifyContent: 'center',
+          gap: 20,
+          padding: '0 30px',
+          flexWrap: 'wrap'
+        }}
+      >
         <OptionSuggestion
           signal={consensus}
           price={parseFloat(price)}
@@ -444,63 +539,257 @@ function Dashboard() {
 
       {/* AUTO-TRADER CONTROL PANEL */}
       {!loading && (
-        <div style={{
-          width: '100%',
-          maxWidth: 660,
-          margin: '16px auto 0',
-          padding: '14px 20px',
-          background: autoTrader.enabled ? '#0a1628' : '#020617',
-          border: `2px solid ${autoTrader.enabled ? '#22c55e' : '#334155'}`,
-          borderRadius: 12,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 16,
-          boxShadow: autoTrader.enabled ? '0 0 20px rgba(34,197,94,0.15)' : 'none',
-        }}>
+        <div
+          style={{
+            width: '100%',
+            maxWidth: 660,
+            margin: '16px auto 0',
+            padding: '14px 20px',
+            background: autoTrader.enabled ? '#0a1628' : '#020617',
+            border: `2px solid ${autoTrader.enabled ? '#22c55e' : '#334155'}`,
+            borderRadius: 12,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+            boxShadow: autoTrader.enabled
+              ? '0 0 20px rgba(34,197,94,0.15)'
+              : 'none'
+          }}
+        >
           {/* Left: Status info */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 10, height: 10, borderRadius: '50%',
-              background: autoTrader.enabled ? '#22c55e' : '#475569',
-              boxShadow: autoTrader.enabled ? '0 0 8px #22c55e' : 'none',
-            }} />
+            <div
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: '50%',
+                background: autoTrader.enabled ? '#22c55e' : '#475569',
+                boxShadow: autoTrader.enabled ? '0 0 8px #22c55e' : 'none'
+              }}
+            />
             <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: autoTrader.enabled ? '#22c55e' : '#94a3b8', letterSpacing: 0.5 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: autoTrader.enabled ? '#22c55e' : '#94a3b8',
+                  letterSpacing: 0.5
+                }}
+              >
                 AUTO TRADER {autoTrader.enabled ? 'ACTIVE' : 'OFF'}
-                {autoTrader.killed && <span style={{ color: '#ef4444', marginLeft: 8 }}>KILLED</span>}
+                {autoTrader.killed && (
+                  <span style={{ color: '#ef4444', marginLeft: 8 }}>
+                    KILLED
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                Paper Mode • Capital: ₹{(autoTrader.available_capital ?? autoTrader.capital ?? 100000).toLocaleString('en-IN')}
+                <span
+                  style={{
+                    color: tradingMode === 'real' ? '#dc2626' : '#94a3b8',
+                    fontWeight: tradingMode === 'real' ? 700 : 400
+                  }}
+                >
+                  {tradingMode === 'real' ? '🔴 REAL MONEY' : 'Paper Mode'}
+                </span>
+                • Capital: ₹
+                {(
+                  autoTrader.available_capital ??
+                  autoTrader.capital ??
+                  100000
+                ).toLocaleString('en-IN')}
                 {autoTrader.enabled && (
-                  <> • Trades: {autoTrader.daily_trade_count || 0}/{autoTrader.max_trades_per_day || 15}
-                  • P&L: <span style={{ color: (autoTrader.daily_pnl || 0) >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
-                    {(autoTrader.daily_pnl || 0) >= 0 ? '+' : ''}₹{(autoTrader.daily_pnl || 0).toFixed(2)}
-                  </span></>
+                  <>
+                    {' '}
+                    • Trades: {autoTrader.daily_trade_count || 0}/
+                    {autoTrader.max_trades_per_day || 15}• P&L:{' '}
+                    <span
+                      style={{
+                        color:
+                          (autoTrader.daily_pnl || 0) >= 0
+                            ? '#22c55e'
+                            : '#ef4444',
+                        fontWeight: 600
+                      }}
+                    >
+                      {(autoTrader.daily_pnl || 0) >= 0 ? '+' : ''}₹
+                      {(autoTrader.daily_pnl || 0).toFixed(2)}
+                    </span>
+                  </>
                 )}
               </div>
             </div>
           </div>
 
-          {/* Right: Toggle button */}
-          <button
-            onClick={toggleAutoTrader}
-            disabled={autoLoading}
+          {/* Right: Buttons */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {/* Mode Toggle */}
+            <div
+              style={{
+                display: 'flex',
+                gap: 4,
+                background: '#0f172a',
+                padding: 4,
+                borderRadius: 6
+              }}
+            >
+              <button
+                onClick={() => initiateModeSwitchOp('paper')}
+                disabled={modeLoading}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: 4,
+                  border: 'none',
+                  fontWeight: 600,
+                  fontSize: 11,
+                  cursor: modeLoading ? 'wait' : 'pointer',
+                  background:
+                    tradingMode === 'paper' ? '#22c55e' : 'transparent',
+                  color: tradingMode === 'paper' ? '#000' : '#94a3b8',
+                  opacity: modeLoading ? 0.6 : 1,
+                  transition: 'all 0.2s'
+                }}
+              >
+                PAPER
+              </button>
+              <button
+                onClick={() => initiateModeSwitchOp('real')}
+                disabled={modeLoading}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: 4,
+                  border: 'none',
+                  fontWeight: 600,
+                  fontSize: 11,
+                  cursor: modeLoading ? 'wait' : 'pointer',
+                  background:
+                    tradingMode === 'real' ? '#dc2626' : 'transparent',
+                  color: tradingMode === 'real' ? '#fff' : '#94a3b8',
+                  opacity: modeLoading ? 0.6 : 1,
+                  transition: 'all 0.2s'
+                }}
+              >
+                💰 REAL
+              </button>
+            </div>
+
+            {/* Start/Stop Button */}
+            <button
+              onClick={toggleAutoTrader}
+              disabled={autoLoading}
+              style={{
+                padding: '8px 20px',
+                borderRadius: 8,
+                border: 'none',
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: autoLoading ? 'wait' : 'pointer',
+                background: autoTrader.enabled ? '#dc2626' : '#22c55e',
+                color: '#fff',
+                letterSpacing: 0.5,
+                opacity: autoLoading ? 0.6 : 1
+              }}
+            >
+              {autoLoading ? '...' : autoTrader.enabled ? 'STOP' : 'START'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* REAL MONEY WARNING MODAL */}
+      {showModeWarning && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.7)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999
+          }}
+        >
+          <div
             style={{
-              padding: '8px 20px',
-              borderRadius: 8,
-              border: 'none',
-              fontWeight: 700,
-              fontSize: 13,
-              cursor: autoLoading ? 'wait' : 'pointer',
-              background: autoTrader.enabled ? '#dc2626' : '#22c55e',
-              color: '#fff',
-              letterSpacing: 0.5,
-              opacity: autoLoading ? 0.6 : 1,
+              background: '#0f172a',
+              border: '2px solid #dc2626',
+              borderRadius: 12,
+              padding: 32,
+              maxWidth: 500,
+              textAlign: 'center'
             }}
           >
-            {autoLoading ? '...' : autoTrader.enabled ? 'STOP' : 'START'}
-          </button>
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: 700,
+                color: '#dc2626',
+                marginBottom: 16
+              }}
+            >
+              ⚠️ REAL MONEY MODE
+            </div>
+            <div
+              style={{
+                fontSize: 14,
+                color: '#cbd5e1',
+                lineHeight: 1.6,
+                marginBottom: 24
+              }}
+            >
+              <p>
+                You are about to switch to <strong>REAL MONEY</strong> trading.
+              </p>
+              <p style={{ color: '#94a3b8', marginTop: 12 }}>
+                • Trades will be executed on your real Kite account
+                <br />• Only <strong>1 trade will be open at a time</strong> in
+                real mode
+                <br />
+                • Available funds from your Kite account will be used
+                <br />• You are responsible for all trades and losses
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+              <button
+                onClick={() => setShowModeWarning(false)}
+                disabled={modeLoading}
+                style={{
+                  padding: '10px 24px',
+                  borderRadius: 8,
+                  border: '1px solid #475569',
+                  background: 'transparent',
+                  color: '#cbd5e1',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  opacity: modeLoading ? 0.5 : 1
+                }}
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={() => confirmModeSwitch('real')}
+                disabled={modeLoading}
+                style={{
+                  padding: '10px 24px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: '#dc2626',
+                  color: '#fff',
+                  fontWeight: 700,
+                  cursor: modeLoading ? 'wait' : 'pointer',
+                  fontSize: 13,
+                  opacity: modeLoading ? 0.6 : 1
+                }}
+              >
+                {modeLoading ? '...' : 'I UNDERSTAND - PROCEED'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

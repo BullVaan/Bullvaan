@@ -84,8 +84,19 @@ def _load_trades():
     if not os.path.exists(TRADES_FILE):
         with open(TRADES_FILE, 'w') as f:
             json.dump([], f)
-    with open(TRADES_FILE, 'r') as f:
-        _trades_cache = json.load(f)
+    try:
+        with open(TRADES_FILE, 'r') as f:
+            content = f.read().strip()
+            if not content:  # File is empty
+                _trades_cache = []
+            else:
+                _trades_cache = json.loads(content)
+    except (json.JSONDecodeError, IOError) as e:
+        logger.error(f"Error loading trades.json: {e}. Resetting to empty list.")
+        _trades_cache = []
+        # Write valid empty array back
+        with open(TRADES_FILE, 'w') as f:
+            json.dump([], f)
     return _trades_cache
 
 
@@ -105,21 +116,27 @@ def _invalidate_trades_cache():
 
 class AutoTrader:
     """
-    Paper-trading engine that monitors signals and auto-executes trades.
+    Auto-trading engine supporting both paper and real trading modes.
+    Monitors signals and auto-executes trades based on risk management.
     Runs as an async background task inside the FastAPI server.
     """
 
-    def __init__(self, get_signal_fn, get_option_ltp_fn, get_entry_snapshot_fn=None):
+    def __init__(self, get_signal_fn, get_option_ltp_fn, get_entry_snapshot_fn=None, kite=None):
         """
         get_signal_fn(symbol) -> dict with: consensus, signal_strength, india_vix
         get_option_ltp_fn(index_prefix, opt_type, strike=None) -> float LTP or None
         get_entry_snapshot_fn(prefix, opt_type) -> (atm_strike, ltp) atomic read
+        kite: KiteConnect instance for real trading (optional)
         """
         self.get_signal = get_signal_fn
         self.get_option_ltp = get_option_ltp_fn
         self.get_entry_snapshot = get_entry_snapshot_fn
+        self.kite = kite
         self.enabled = False
         self.running = False
+        
+        # Trading mode: "paper" or "real"
+        self.trading_mode = "paper"
 
         # Per-index state
         self._cooldowns = {}      # {prefix: datetime when cooldown expires}
@@ -129,6 +146,11 @@ class AutoTrader:
         self._daily_pnl = 0.0
         self._last_reset_date = None
         self._task = None
+        
+        # Real trading state
+        self._account_cache = {}  # Cache for account info
+        self._real_order_ids = {} # Map from trade_id to order_id for real trades
+        self._max_position_size = 1  # Max 1 open trade at a time in real mode
 
     # ─── State helpers ────────────────────────────
 
@@ -185,16 +207,157 @@ class AutoTrader:
         if minutes > 0:
             self._cooldowns[prefix] = _ist_now() + timedelta(minutes=minutes)
 
+    # ─── Real Trading Functions ────────────────────
+
+    def _get_kite_account_balance(self):
+        """Fetch available margin from Kite account (cached for 1 min)"""
+        if not self.kite:
+            return None
+        
+        try:
+            # Check cache
+            cached = self._account_cache.get("balance")
+            if cached:
+                age = datetime.now() - cached["time"]
+                if age.total_seconds() < 60:  # Cache for 1 minute
+                    return cached["value"]
+            
+            # Fetch fresh - using equity margins which is the main trading account
+            margins = self.kite.margins()
+            
+            logger.info(f"DEBUG: Full Kite margins response: {margins}")
+            
+            available = 0
+            
+            # Priority: use equity segment (main trading account)
+            if "equity" in margins and isinstance(margins["equity"], dict):
+                equity_data = margins["equity"]
+                logger.info(f"DEBUG: Equity data: {equity_data}")
+                
+                # Try to get live_balance first (actual trading power)
+                if isinstance(equity_data.get("available"), dict):
+                    available_dict = equity_data["available"]
+                    # Use live_balance if available (actual balance including holdings)
+                    if available_dict.get("live_balance"):
+                        available = available_dict["live_balance"]
+                        logger.info(f"DEBUG: Found equity.available.live_balance = {available}")
+                    # Fallback to opening_balance
+                    elif available_dict.get("opening_balance"):
+                        available = available_dict["opening_balance"]
+                        logger.info(f"DEBUG: Found equity.available.opening_balance = {available}")
+                    # Fallback to cash
+                    else:
+                        available = available_dict.get("cash", 0)
+                        logger.info(f"DEBUG: Found equity.available.cash = {available}")
+                # If available is not a dict, try net (total available margin)
+                elif equity_data.get("net"):
+                    available = equity_data.get("net", 0)
+                    logger.info(f"DEBUG: Found equity.net = {available}")
+                else:
+                    available = equity_data.get("available", 0)
+                    logger.info(f"DEBUG: Found equity.available = {available}")
+            # Fallback to commodity segment
+            elif "commodity" in margins and isinstance(margins["commodity"], dict):
+                commodity_data = margins["commodity"]
+                logger.info(f"DEBUG: Commodity data: {commodity_data}")
+                
+                if isinstance(commodity_data.get("available"), dict):
+                    available_dict = commodity_data["available"]
+                    available = available_dict.get("live_balance") or available_dict.get("cash", 0)
+                    logger.info(f"DEBUG: Found commodity.available = {available}")
+                else:
+                    available = commodity_data.get("available", 0)
+                    logger.info(f"DEBUG: Found commodity.available = {available}")
+            else:
+                available = margins.get("available", 0)
+                logger.info(f"DEBUG: Found margins.available = {available}")
+            
+            # Ensure available is a number
+            if isinstance(available, dict):
+                available = available.get("live_balance") or available.get("cash", 0)
+                logger.info(f"DEBUG: Converted dict to numeric value: {available}")
+            
+            available = float(available) if available else 0
+            
+            self._account_cache["balance"] = {
+                "value": available,
+                "time": datetime.now()
+            }
+            logger.info(f"Real account available margin: ₹{available}")
+            return available
+        except Exception as e:
+            logger.error(f"Cannot fetch Kite account balance: {e}", exc_info=True)
+            return None
+
+    def _get_available_capital(self):
+        """Get available capital - real or paper based on trading mode"""
+        if self.trading_mode == "real" and self.kite:
+            cap = self._get_kite_account_balance()
+            if cap is not None:
+                return cap
+        # Fallback to paper trading capital
+        return TOTAL_CAPITAL - self._used_capital()
+
+    def _max_lots(self, atm_price, lot_size):
+        """Calculate max affordable lots"""
+        if atm_price <= 0:
+            return 0
+        cost_per_lot = atm_price * lot_size
+        
+        # In real mode, allow only 1 lot (1 trade at a time as per user request)
+        # In paper mode, allow multiple lots based on capital
+        if self.trading_mode == "real":
+            max_allowed = 1
+        else:
+            max_allowed = MAX_LOTS_PER_TRADE
+        
+        affordable = int(self._get_available_capital() // cost_per_lot)
+        return min(affordable, max_allowed)
+
     # ─── Kill switch ──────────────────────────────
 
     def _is_killed(self):
         """Check if daily loss limit hit"""
         return self._daily_pnl <= -MAX_DAILY_LOSS
 
-    # ─── Trade execution (paper) ──────────────────
+    # ─── Trade execution (paper & real) ────────────────────
+
+    def _get_option_tradingsymbol(self, prefix, strike, opt_type):
+        """Get Zerodha trading symbol for an option (e.g. NIFTY24RUL18500CE)"""
+        try:
+            # Get config for this index
+            symbol_config = {
+                "NIFTY": {"exchange": "NFO", "name": "NIFTY"},
+                "BANKNIFTY": {"exchange": "NFO", "name": "BANKNIFTY"},
+                "SENSEX": {"exchange": "BFO", "name": "SENSEX"},
+            }
+            cfg = symbol_config.get(prefix)
+            if not cfg:
+                return None
+            
+            # Get near expiry from cache or fresh
+            from api.server import get_near_expiry_options, SYMBOL_CONFIG
+            zerodha_symbol = cfg["name"]
+            expiry_opts, expiry_date = get_near_expiry_options(zerodha_symbol)
+            
+            if not expiry_opts:
+                return None
+            
+            # Find the option with matching strike and type
+            matching = [
+                opt for opt in expiry_opts 
+                if opt['strike'] == strike and opt['instrument_type'] == opt_type
+            ]
+            
+            if matching:
+                return matching[0]['tradingsymbol']
+            return None
+        except Exception as e:
+            logger.error(f"Error getting option tradingsymbol: {e}")
+            return None
 
     def _execute_buy(self, prefix, option_name, buy_price, lots, lot_size, signal_strength, rule):
-        """Paper buy — writes to trades.json"""
+        """Execute buy — paper writes to trades.json, real places Kite order"""
         ist = _ist_now()
         quantity = lots * lot_size
 
@@ -217,7 +380,48 @@ class AutoTrader:
             "signal_strength": signal_strength,
             "target_pts": rule["target_pts"],
             "sl_pts": rule["sl_pts"],
+            "mode": self.trading_mode,  # Track which mode this trade was made in
         }
+
+        # Real trading: place actual order via Kite
+        if self.trading_mode == "real" and self.kite:
+            try:
+                parts = option_name.split()
+                strike = float(parts[1])
+                opt_type = parts[2]
+                
+                tradingsymbol = self._get_option_tradingsymbol(prefix, strike, opt_type)
+                if not tradingsymbol:
+                    logger.error(f"Cannot get tradingsymbol for {option_name}")
+                    return trade
+                
+                # Place BUY order via Kite API
+                # Tag must be max 20 chars, so use short format: buy_<last6digits>
+                short_id = str(trade_id)[-6:]
+                order_id = self.kite.place_order(
+                    variety=self.kite.VARIETY_REGULAR,
+                    exchange="NFO" if prefix != "SENSEX" else "BFO",
+                    tradingsymbol=tradingsymbol,
+                    transaction_type=self.kite.TRANSACTION_TYPE_BUY,
+                    quantity=quantity,
+                    order_type=self.kite.ORDER_TYPE_MARKET,
+                    product=self.kite.PRODUCT_MIS,
+                    tag=f"buy_{short_id}"
+                )
+                
+                self._real_order_ids[trade_id] = order_id
+                trade["order_id"] = order_id
+                trade["kite_tradingsymbol"] = tradingsymbol
+                
+                logger.info(
+                    f"REAL AUTO BUY: {option_name} | {quantity}qty | "
+                    f"₹{buy_price} | OrderID={order_id} | Strength={signal_strength} | "
+                    f"Target=+{rule['target_pts']} SL=-{rule['sl_pts']}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to place real buy order for {option_name}: {e}")
+                trade["error"] = str(e)
+                trade["status"] = "error"
 
         trades.append(trade)
         _save_trades(trades)
@@ -226,15 +430,43 @@ class AutoTrader:
         logger.info(
             f"AUTO BUY: {option_name} | {lots}L x {lot_size} = {quantity}qty | "
             f"₹{buy_price} | Strength={signal_strength} | "
-            f"Target=+{rule['target_pts']} SL=-{rule['sl_pts']}"
+            f"Target=+{rule['target_pts']} SL=-{rule['sl_pts']} | Mode={self.trading_mode}"
         )
         return trade
 
     def _execute_sell(self, trade, sell_price, reason=""):
-        """Paper sell — updates trades.json"""
+        """Execute sell — paper updates trades.json, real places Kite order"""
         ist = _ist_now()
         qty = int(trade.get('quantity', trade.get('lot', 1)))
         pnl = round((sell_price - trade['buy_price']) * qty, 2)
+
+        # Real trading: place sell order via Kite
+        if trade.get("mode") == "real" and self.kite and "order_id" in trade:
+            try:
+                tradingsymbol = trade.get("kite_tradingsymbol")
+                if tradingsymbol:
+                    exchange = "NFO" if "SENSEX" not in tradingsymbol else "BFO"
+                    
+                    # Place SELL order via Kite API
+                    # Tag must be max 20 chars
+                    short_id = str(trade['id'])[-4:]
+                    sell_order_id = self.kite.place_order(
+                        variety=self.kite.VARIETY_REGULAR,
+                        exchange=exchange,
+                        tradingsymbol=tradingsymbol,
+                        transaction_type=self.kite.TRANSACTION_TYPE_SELL,
+                        quantity=qty,
+                        order_type=self.kite.ORDER_TYPE_MARKET,
+                        product=self.kite.PRODUCT_MIS,
+                        tag=f"sell_{short_id}"
+                    )
+                    
+                    logger.info(
+                        f"REAL AUTO SELL: {trade['name']} | OrderID={sell_order_id} | "
+                        f"₹{sell_price} | P&L=₹{pnl} | Reason={reason}"
+                    )
+            except Exception as e:
+                logger.error(f"Failed to place real sell order for {trade['name']}: {e}")
 
         trades = _load_trades()
         for t in trades:
@@ -251,7 +483,7 @@ class AutoTrader:
 
         logger.info(
             f"AUTO SELL: {trade['name']} | ₹{sell_price} | "
-            f"P&L=₹{pnl} | Reason={reason} | Day P&L=₹{self._daily_pnl}"
+            f"P&L=₹{pnl} | Reason={reason} | Day P&L=₹{self._daily_pnl} | Mode={trade.get('mode', 'paper')}"
         )
         return pnl
 
@@ -477,14 +709,85 @@ class AutoTrader:
             self._task.cancel()
             self._task = None
 
+    def set_trading_mode(self, mode):
+        """Switch between paper and real trading modes
+        
+        Args:
+            mode: "paper" or "real"
+            
+        Returns:
+            dict with status and message
+        """
+        if mode not in ["paper", "real"]:
+            return {"status": "error", "message": "Invalid mode. Use 'paper' or 'real'"}
+        
+        if self.trading_mode == mode:
+            if mode == "real":
+                balance = self._get_kite_account_balance()
+                if balance is not None:
+                    return {
+                        "status": "ok",
+                        "message": f"Already in {mode} mode",
+                        "trading_mode": mode,
+                        "account_balance": round(balance, 2)
+                    }
+            return {"status": "ok", "message": f"Already in {mode} mode", "trading_mode": mode}
+        
+        # Close all open positions before switching modes
+        if self._get_open_trades():
+            logger.warning(f"Closing all open positions before switching to {mode} mode")
+            for t in self._get_open_trades():
+                if t.get('auto'):
+                    ltp = self._get_trade_ltp(t)
+                    sell_price = ltp if ltp else t['buy_price']
+                    self._execute_sell(t, sell_price, reason=f"MODE_SWITCH_TO_{mode.upper()}")
+        
+        self.trading_mode = mode
+        
+        # In real mode, verify Kite connection
+        if mode == "real":
+            if not self.kite:
+                self.trading_mode = "paper"  # Revert
+                return {
+                    "status": "error",
+                    "message": "Kite API not configured",
+                    "trading_mode": self.trading_mode
+                }
+            
+            # Try to get account balance to verify connection
+            balance = self._get_kite_account_balance()
+            if balance is None:
+                self.trading_mode = "paper"  # Revert
+                logger.error(f"Balance fetch returned None")
+                return {
+                    "status": "error",
+                    "message": "Cannot fetch balance from Kite account. Check API credentials.",
+                    "trading_mode": self.trading_mode
+                }
+            
+            logger.info(f"Switched to REAL trading mode. Account balance: ₹{balance}")
+            return {
+                "status": "ok",
+                "message": f"Switched to REAL trading mode",
+                "trading_mode": mode,
+                "account_balance": round(balance, 2)
+            }
+        else:
+            logger.info(f"Switched to PAPER trading mode")
+            return {
+                "status": "ok",
+                "message": f"Switched to PAPER trading mode",
+                "trading_mode": mode
+            }
+
     def get_status(self):
         """Return engine status for API"""
-        return {
+        status = {
             "enabled": self.enabled,
             "running": self.running,
-            "mode": "paper",
+            "trading_mode": self.trading_mode,
             "capital": TOTAL_CAPITAL,
-            "available_capital": round(self._available_capital(), 2),
+            "available_capital": round(self._get_available_capital(), 2),
             "used_capital": round(self._used_capital(), 2),
             "daily_trade_count": self._daily_trade_count,
             "max_trades_per_day": MAX_TRADES_PER_DAY,
@@ -498,4 +801,6 @@ class AutoTrader:
                 if v > _ist_now()
             },
             "open_positions": len(self._get_open_trades()),
+            "max_position_size": self._max_position_size,  # Max 1 in real mode
         }
+        return status

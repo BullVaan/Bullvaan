@@ -1064,6 +1064,7 @@ auto_trader = AutoTrader(
     get_signal_fn=_auto_get_signal,
     get_option_ltp_fn=_auto_get_option_ltp,
     get_entry_snapshot_fn=_auto_get_entry_snapshot,
+    kite=kite,  # Pass Kite connection for real trading
 )
 
 # Initialize premarket signal engine
@@ -1803,48 +1804,138 @@ def add_trade(trade: dict = Body(...)):
     - sell_price: float (optional, 0 if still open)
     - buy_time: str (HH:MM IST)
     - sell_time: str (HH:MM IST, optional)
+    
+    If in REAL mode, places actual Kite order
     """
-    trades = _load_trades()
-    ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+    try:
+        trades = _load_trades()
+        ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
 
-    buy_price = float(trade.get('buy_price', 0))
-    sell_price = float(trade.get('sell_price', 0))
-    lot = int(trade.get('lot', 1))
-    quantity = int(trade.get('quantity', lot))
+        buy_price = float(trade.get('buy_price', 0))
+        sell_price = float(trade.get('sell_price', 0))
+        lot = int(trade.get('lot', 1))
+        quantity = int(trade.get('quantity', lot * 65))  # Default 65 qty per lot for options
+        option_name = trade.get('name', '')
 
-    new_trade = {
-        "id": int(ist_now.timestamp() * 1000),
-        "date": ist_now.strftime('%Y-%m-%d'),
-        "name": trade.get('name', ''),
-        "lot": lot,
-        "quantity": quantity,
-        "buy_price": buy_price,
-        "sell_price": sell_price,
-        "buy_time": trade.get('buy_time') or ist_now.strftime('%H:%M'),
-        "sell_time": trade.get('sell_time', ''),
-        "pnl": round((sell_price - buy_price) * quantity, 2) if sell_price else 0,
-        "status": "closed" if sell_price else "open"
-    }
-    trades.append(new_trade)
-    _save_trades(trades)
-    return new_trade
+        new_trade = {
+            "id": int(ist_now.timestamp() * 1000),
+            "date": ist_now.strftime('%Y-%m-%d'),
+            "name": option_name,
+            "lot": lot,
+            "quantity": quantity,
+            "buy_price": buy_price,
+            "sell_price": sell_price,
+            "buy_time": trade.get('buy_time') or ist_now.strftime('%H:%M'),
+            "sell_time": trade.get('sell_time', ''),
+            "pnl": round((sell_price - buy_price) * quantity, 2) if sell_price else 0,
+            "status": "closed" if sell_price else "open",
+            "auto": False,  # Manual trade
+            "mode": auto_trader.trading_mode  # Track trading mode
+        }
+
+        # Real trading: place BUY order via Kite
+        if auto_trader.trading_mode == "real" and auto_trader.kite and not sell_price:
+            try:
+                # Parse option details: "NIFTY 25700 CE" -> prefix, strike, opt_type
+                parts = option_name.split()
+                if len(parts) >= 3:
+                    prefix = parts[0]
+                    strike = float(parts[1])
+                    opt_type = parts[2]
+                    
+                    # Get trading symbol from auto_trader
+                    tradingsymbol = auto_trader._get_option_tradingsymbol(prefix, strike, opt_type)
+                    if tradingsymbol:
+                        # Place BUY order
+                        order_id = auto_trader.kite.place_order(
+                            variety=auto_trader.kite.VARIETY_REGULAR,
+                            exchange="NFO" if prefix != "SENSEX" else "BFO",
+                            tradingsymbol=tradingsymbol,
+                            transaction_type=auto_trader.kite.TRANSACTION_TYPE_BUY,
+                            quantity=quantity,
+                            order_type=auto_trader.kite.ORDER_TYPE_MARKET,
+                            product=auto_trader.kite.PRODUCT_MIS,
+                            tag=f"manual_buy_{new_trade['id']}"
+                        )
+                        
+                        new_trade["order_id"] = order_id
+                        new_trade["kite_tradingsymbol"] = tradingsymbol
+                        logger.info(f"MANUAL REAL BUY: {option_name} | {quantity}qty | ₹{buy_price} | OrderID={order_id}")
+                    else:
+                        logger.error(f"Could not get tradingsymbol for {option_name}")
+                        new_trade["error"] = "Could not resolve trading symbol"
+            except Exception as e:
+                logger.error(f"Failed to place manual real buy order: {e}", exc_info=True)
+                new_trade["error"] = str(e)
+
+        trades.append(new_trade)
+        _save_trades(trades)
+        _invalidate_trades_cache()
+        return new_trade
+    except Exception as e:
+        logger.error(f"Error in add_trade: {e}", exc_info=True)
+        return {"error": str(e)}
 
 @app.put("/trades/{trade_id}")
 def update_trade(trade_id: int, trade: dict = Body(...)):
-    """Update a trade (e.g. close it with sell_price and sell_time)"""
-    trades = _load_trades()
-    for t in trades:
-        if t['id'] == trade_id:
-            for key, val in trade.items():
-                t[key] = val
-            # Recalculate P&L
-            if t.get('sell_price'):
-                qty = int(t.get('quantity', t['lot']))
-                t['pnl'] = round((float(t['sell_price']) - float(t['buy_price'])) * qty, 2)
-                t['status'] = 'closed'
-            _save_trades(trades)
-            return t
-    return {"error": "Trade not found"}
+    """Update a trade (e.g. close it with sell_price and sell_time)
+    
+    If in REAL mode and closing a trade, places actual Kite sell order
+    """
+    try:
+        trades = _load_trades()
+        for t in trades:
+            if t['id'] == trade_id:
+                # Check if this is a SELL action (close trade)
+                new_sell_price = trade.get('sell_price')
+                is_closing = new_sell_price and not t.get('sell_price')
+                
+                # Real trading: place SELL order via Kite before updating
+                if auto_trader.trading_mode == "real" and auto_trader.kite and is_closing:
+                    try:
+                        tradingsymbol = t.get("kite_tradingsymbol")
+                        if tradingsymbol:
+                            qty = int(t.get('quantity', t['lot']))
+                            exchange = "NFO" if "SENSEX" not in tradingsymbol else "BFO"
+                            
+                            # Place SELL order
+                            sell_order_id = auto_trader.kite.place_order(
+                                variety=auto_trader.kite.VARIETY_REGULAR,
+                                exchange=exchange,
+                                tradingsymbol=tradingsymbol,
+                                transaction_type=auto_trader.kite.TRANSACTION_TYPE_SELL,
+                                quantity=qty,
+                                order_type=auto_trader.kite.ORDER_TYPE_MARKET,
+                                product=auto_trader.kite.PRODUCT_MIS,
+                                tag=f"manual_sell_{trade_id}"
+                            )
+                            
+                            t["sell_order_id"] = sell_order_id
+                            logger.info(f"MANUAL REAL SELL: {t['name']} | {qty}qty | ₹{new_sell_price} | OrderID={sell_order_id}")
+                        else:
+                            logger.warning(f"No tradingsymbol found for manual sell of trade {trade_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to place manual real sell order: {e}", exc_info=True)
+                        t["sell_error"] = str(e)
+                
+                # Update trade record
+                for key, val in trade.items():
+                    t[key] = val
+                
+                # Recalculate P&L
+                if t.get('sell_price'):
+                    qty = int(t.get('quantity', t['lot']))
+                    t['pnl'] = round((float(t['sell_price']) - float(t['buy_price'])) * qty, 2)
+                    t['status'] = 'closed'
+                
+                _save_trades(trades)
+                _invalidate_trades_cache()
+                return t
+        
+        return {"error": "Trade not found"}
+    except Exception as e:
+        logger.error(f"Error in update_trade: {e}", exc_info=True)
+        return {"error": str(e)}
 
 @app.delete("/trades/{trade_id}")
 def delete_trade(trade_id: int):
@@ -1887,6 +1978,53 @@ async def auto_trader_test_mode(body: dict = Body(...)):
     import engine.auto_trader as at_module
     at_module.TEST_MODE = body.get("enabled", False)
     return {"test_mode": at_module.TEST_MODE}
+
+
+@app.post("/auto-trader/trading-mode")
+async def auto_trader_set_mode(body: dict = Body(...)):
+    """Switch trading mode between paper and real
+    
+    Request body: {"mode": "paper" | "real"}
+    
+    Returns:
+    - status: "ok" or "error"
+    - trading_mode: current mode after the request
+    - account_balance: available balance (real mode only)
+    """
+    try:
+        mode = body.get("mode", "paper")
+        result = auto_trader.set_trading_mode(mode)
+        return result
+    except Exception as e:
+        logger.error(f"Error in trading mode switch: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Internal server error: {str(e)}",
+            "trading_mode": auto_trader.trading_mode
+        }
+
+
+@app.get("/auto-trader/account-balance")
+def auto_trader_account_balance():
+    """Get real account balance (Kite API)
+    
+    Returns:
+    - balance: available cash margin (None if not in real mode)
+    - trading_mode: current trading mode
+    """
+    if auto_trader.trading_mode != "real":
+        return {
+            "balance": None,
+            "trading_mode": auto_trader.trading_mode,
+            "message": f"Not in real mode. Current mode: {auto_trader.trading_mode}"
+        }
+    
+    balance = auto_trader._get_kite_account_balance()
+    return {
+        "balance": round(balance, 2) if balance else None,
+        "trading_mode": auto_trader.trading_mode,
+        "error": "Cannot fetch balance" if balance is None else None
+    }
 
 
 # =========================
@@ -2182,325 +2320,273 @@ def debug_premarket_health():
 @app.get("/next-move")
 def get_next_move():
     """
-    Predicts whether indices (NIFTY, BANKNIFTY, SENSEX) will open positive or negative next day.
-    Uses MVP signals: closing strength, support/resistance, sector sentiment.
-    Returns probability score (50-75%) and signals.
+    Analyzes last 30 minutes of data to predict NEXT 30 MINUTES direction.
+    CE/PE holding recommendation for each index.
     """
     import pandas as pd
     from datetime import datetime, timedelta
     
+    logger = logging.getLogger("api.server")
+    
     try:
-        indices = ["NIFTY", "BANKNIFTY", "SENSEX"]
+        # ====== CHECK MARKET HOURS IN IST ======
+        utc_now = datetime.utcnow()
+        ist_now = utc_now + timedelta(hours=5, minutes=30)  # IST = UTC + 5:30
+        ist_hour = ist_now.hour
+        ist_minute = ist_now.minute
+        
+        is_market_hours = (9 <= ist_hour < 15) or (ist_hour == 15 and ist_minute <= 30)
+        
+        logger.info(f"Market hours check: UTC={utc_now.strftime('%H:%M:%S')}, IST={ist_now.strftime('%H:%M:%S')}, Open={is_market_hours}")
+        
+        # Map indices to their tokens stored in INDEX_TOKENS
+        index_mapping = {
+            "NIFTY": "NIFTY 50",
+            "BANKNIFTY": "NIFTY BANK",
+            "SENSEX": "SENSEX"
+        }
+        
         predictions = {}
         
-        for index in indices:
+        for index_name, nse_symbol in index_mapping.items():
             signals = {
                 "closing_strength": 0,
                 "support_resistance": 0,
                 "sector_sentiment": 0,
                 "volume_trend": 0,
+                "pcr_ratio": "N/A",
                 "overall_probability": 0,
                 "recommendation": "NEUTRAL",
+                "hold_ce_pe": "NONE",
                 "signals": []
             }
             
+            # If market is closed, show status
+            if not is_market_hours:
+                signals["signals"].append(f"🔴 Market Closed - Next opens at 9:15 AM IST")
+                predictions[index_name] = signals
+                continue
+            
             try:
-                cfg = SYMBOL_CONFIG.get(index, SYMBOL_CONFIG["NIFTY"])
-                token = _get_spot_token(index)
+                # Find token from INDEX_TOKENS (already populated by startup routine)
+                token = None
+                for tok, info in INDEX_TOKENS.items():
+                    if nse_symbol in info.get("key", ""):
+                        token = tok
+                        break
                 
                 if not token:
-                    signals["signals"].append("⚠️ Token not found")
-                    predictions[index] = signals
+                    logger.error(f"Index token not found for {index_name} ({nse_symbol}). Available: {list(INDEX_TOKENS.keys())}")
+                    signals["signals"].append(f"❌ Index token not resolved")
+                    predictions[index_name] = signals
                     continue
                 
-                # Fetch last 30 minutes candles
+                logger.info(f"Fetching historical data for {index_name} (token {token}, nse_symbol {nse_symbol})")
+                
+                # Fetch candles - try minute first, fallback to 5-min, then daily
                 to_date = datetime.now()
                 from_date = to_date - timedelta(minutes=30)
                 
-                candles = kite.historical_data(token, from_date, to_date, "minute")
+                candles = None
+                candle_interval = "minute"
                 
-                if not candles or len(candles) < 5:
-                    signals["signals"].append("⚠️ Insufficient data")
-                    predictions[index] = signals
+                # Try minute candles first
+                try:
+                    minute_candles = kite.historical_data(token, from_date, to_date, "minute")
+                    if minute_candles and len(minute_candles) >= 3:
+                        candles = minute_candles
+                        logger.info(f"{index_name}: Got {len(candles)} minute candles")
+                except Exception as e:
+                    logger.warning(f"Minute candles failed for {index_name}: {e}")
+                
+                # Fallback to 5-minute candles if minute data not available (day is young)
+                if not candles or len(candles) < 3:
+                    try:
+                        five_min_candles = kite.historical_data(token, from_date, to_date, "5minute")
+                        if five_min_candles and len(five_min_candles) >= 2:
+                            candles = five_min_candles
+                            candle_interval = "5minute"
+                            logger.info(f"{index_name}: Fell back to {len(candles)} 5-minute candles")
+                    except Exception as e:
+                        logger.warning(f"5-minute candles failed for {index_name}: {e}")
+                
+                # Last resort: daily candles
+                if not candles or len(candles) < 2:
+                    try:
+                        daily_candles = kite.historical_data(token, from_date, to_date, "day")
+                        if daily_candles and len(daily_candles) >= 1:
+                            candles = daily_candles
+                            candle_interval = "day"
+                            logger.info(f"{index_name}: Fell back to {len(candles)} daily candles")
+                    except Exception as e:
+                        logger.warning(f"Daily candles failed for {index_name}: {e}")
+                
+                if not candles or len(candles) < 1:
+                    logger.warning(f"{index_name} has no candles at all")
+                    signals["signals"].append(f"⏳ No market data. Market hours: 9:15 AM - 3:30 PM IST")
+                    predictions[index_name] = signals
                     continue
                 
+                signals["signals"].append(f"📊 Using {candle_interval} candles ({len(candles)})")
+                logger.info(f"{index_name}: Using {len(candles)} {candle_interval} candles")
+                
                 # ========== SIGNAL 1: CLOSING STRENGTH ==========
-                # Check if last 5 minutes show buying/selling pressure
-                last_5_candles = candles[-5:]
-                close_prices = [c["close"] for c in last_5_candles]
-                close_high = close_prices[-1]
-                close_low = close_prices[-1]
+                # How many of the last candles closed in upper half?
+                last_candles = candles[-3:] if len(candles) >= 3 else candles
+                upper_half_count = 0
+                for candle in last_candles:
+                    high_low_range = candle["high"] - candle["low"]
+                    if high_low_range > 0:
+                        close_position = (candle["close"] - candle["low"]) / high_low_range
+                        if close_position > 0.5:
+                            upper_half_count += 1
                 
-                # Count candles closing in upper half
-                upper_close_count = 0
-                for i, candle in enumerate(last_5_candles):
-                    candle_range = candle["high"] - candle["low"]
-                    close_position = (candle["close"] - candle["low"]) / candle_range if candle_range > 0 else 0.5
-                    if close_position > 0.6:
-                        upper_close_count += 1
-                
-                closing_strength = (upper_close_count / 5) * 100
+                closing_strength = round((upper_half_count / len(last_candles)) * 100, 1)
                 signals["closing_strength"] = closing_strength
                 
-                if closing_strength > 65:
-                    signals["signals"].append("✅ Strong closing bullish (66-100%)")
-                    signals["closing_strength_score"] = 25
-                elif closing_strength > 50:
-                    signals["signals"].append("📈 Mild closing bullish (51-65%)")
-                    signals["closing_strength_score"] = 15
-                elif closing_strength > 35:
-                    signals["signals"].append("📉 Mild closing bearish")
-                    signals["closing_strength_score"] = -15
+                if closing_strength >= 67:
+                    signals["signals"].append(f"✅ Strong Bullish Closing ({closing_strength}%)")
+                    closing_score = 20
+                elif closing_strength >= 34:
+                    signals["signals"].append(f"➡️ Mixed Closing ({closing_strength}%)")
+                    closing_score = 0
                 else:
-                    signals["signals"].append("❌ Strong closing bearish (<35%)")
-                    signals["closing_strength_score"] = -25
+                    signals["signals"].append(f"❌ Strong Bearish Closing ({closing_strength}%)")
+                    closing_score = -20
                 
-                # ========== SIGNAL 2: SUPPORT/RESISTANCE BREAKOUT ==========
-                # Last 20 candles - find support and resistance
-                last_20 = candles[-20:] if len(candles) >= 20 else candles
-                highs = [c["high"] for c in last_20]
-                lows = [c["low"] for c in last_20]
+                # ========== SIGNAL 2: SUPPORT/RESISTANCE LEVELS ==========
+                recent_highs = [c["high"] for c in candles[-10:]] if len(candles) >= 10 else [c["high"] for c in candles]
+                recent_lows = [c["low"] for c in candles[-10:]] if len(candles) >= 10 else [c["low"] for c in candles]
                 
-                resistance = max(highs)
-                support = min(lows)
-                current_close = candles[-1]["close"]
-                current_high = candles[-1]["high"]
+                resistance = max(recent_highs)
+                support = min(recent_lows)
+                current_price = candles[-1]["close"]
                 
-                resistance_breakout = False
-                support_breakdown = False
+                sr_distance = abs(current_price - support) + abs(current_price - resistance)
                 
-                if current_close > resistance * 1.002:  # 0.2% above resistance
-                    resistance_breakout = True
-                    signals["signals"].append("⬆️ Resistance breakout - Bullish")
-                    signals["support_resistance_score"] = 20
-                elif current_close < support * 0.998:  # 0.2% below support
-                    support_breakdown = True
-                    signals["signals"].append("⬇️ Support breakdown - Bearish")
-                    signals["support_resistance_score"] = -20
+                signals["support_resistance"] = round(sr_distance, 2)
+                
+                # Check if price is near breakout/breakdown
+                resistance_ratio = (current_price - support) / (resistance - support) if (resistance - support) > 0 else 0.5
+                
+                if resistance_ratio > 0.75:
+                    signals["signals"].append(f"⬆️ Near Resistance ({resistance:.2f}) - Downside Risk")
+                    sr_score = -15
+                elif resistance_ratio < 0.25:
+                    signals["signals"].append(f"⬇️ Near Support ({support:.2f}) - Upside Potential")
+                    sr_score = 15
                 else:
-                    signals["support_resistance_score"] = 0
-                    signals["signals"].append("➡️ Trading within support/resistance")
+                    signals["signals"].append(f"➡️ Between S/R - Neutral Zone")
+                    sr_score = 0
                 
-                # ========== SIGNAL 3: SECTOR SENTIMENT ==========
-                # For NIFTY: check NIFTY50 movers sentiment
-                # For others: use general trend
-                sector_sentiment = 0
+                # ========== SIGNAL 3: VOLUME TREND ==========
+                recent_volumes = [c["volume"] for c in candles[-5:]] if len(candles) >= 5 else [c["volume"] for c in candles]
+                avg_volume = sum(recent_volumes) / len(recent_volumes)
+                current_volume = candles[-1]["volume"]
                 
-                if index == "NIFTY":
-                    # Get NIFTY50 movers
-                    movers, _ = fetch_nifty50_movers()
-                    if movers:
-                        gainers = len([m for m in movers if m.get("percentChange", 0) > 0])
-                        total = len(movers)
-                        bullish_ratio = (gainers / total) * 100
-                        
-                        if bullish_ratio > 65:
-                            signals["signals"].append(f"📊 Sector bullish: {gainers}/{total} gainers")
-                            sector_sentiment = 20
-                        elif bullish_ratio < 35:
-                            signals["signals"].append(f"📊 Sector bearish: {gainers}/{total} gainers")
-                            sector_sentiment = -20
-                        else:
-                            signals["signals"].append(f"📊 Sector mixed: {gainers}/{total} gainers")
-                            sector_sentiment = 0
+                volume_change = ((current_volume - avg_volume) / avg_volume * 100) if avg_volume > 0 else 0
+                signals["volume_trend"] = round(volume_change, 1)
+                
+                if current_volume > avg_volume * 1.2:
+                    signals["signals"].append(f"📈 Volume UP ({volume_change:.1f}%) - Bullish Confirmation")
+                    volume_score = 10
+                elif current_volume < avg_volume * 0.8:
+                    signals["signals"].append(f"📉 Volume DOWN ({volume_change:.1f}%) - Weak Move")
+                    volume_score = -10
                 else:
-                    # For indices, use volume trend
-                    volumes = [c["volume"] for c in last_5_candles]
-                    avg_vol = sum(volumes) / len(volumes)
-                    if volumes[-1] > avg_vol * 1.2:
-                        sector_sentiment = 15
-                        signals["signals"].append("📊 Strong volume - Bullish")
-                    elif volumes[-1] < avg_vol * 0.8:
-                        sector_sentiment = -10
-                        signals["signals"].append("📊 Weak volume - Bearish")
+                    signals["signals"].append(f"➡️ Volume Normal ({volume_change:.1f}%)")
+                    volume_score = 0
                 
-                signals["sector_sentiment"] = sector_sentiment
+                # ========== SIGNAL 4: SECTOR SENTIMENT (simplified) ==========
+                # Use price momentum over last few candles
+                if len(candles) >= 3:
+                    price_change = ((candles[-1]["close"] - candles[-3]["close"]) / candles[-3]["close"] * 100) if candles[-3]["close"] > 0 else 0
+                    signals["signals"].append(f"📊 Price Momentum: {price_change:+.2f}%")
+                    sector_score = 15 if price_change > 0.5 else (-15 if price_change < -0.5 else 0)
+                else:
+                    price_change = 0
+                    sector_score = 0
                 
-                # ========== SIGNAL 4: VOLUME TREND ==========
-                volume_trend_score = 0
-                last_3_volumes = [c["volume"] for c in candles[-3:]]
-                avg_volume = sum(last_3_volumes) / len(last_3_volumes)
+                signals["sector_sentiment"] = round(price_change, 2)
                 
-                if last_3_volumes[-1] > avg_volume * 1.3:
-                    volume_trend_score = 10
-                    signals["signals"].append("📈 Volume increasing")
-                elif last_3_volumes[-1] < avg_volume * 0.7:
-                    volume_trend_score = -10
-                    signals["signals"].append("📉 Volume decreasing")
-                
-                signals["volume_trend"] = volume_trend_score
-                
-                # ========== SIGNAL 5: PUT/CALL RATIO (PCR) ==========
-                pcr_score = 0
-                pcr_value = None
+                # ========== SIGNAL 5: PCR RATIO (Put/Call) ==========
                 try:
-                    # Get options chain data
-                    # For NIFTY, we check near ATM (At-The-Money) options
                     current_price = candles[-1]["close"]
+                    cfg = SYMBOL_CONFIG.get(index_name, SYMBOL_CONFIG["NIFTY"])
                     
-                    if index == "NIFTY":
-                        # Get NIFTY options tokens
-                        instruments = kite.instruments("NFO")
-                        # Find near-the-money options (current month)
-                        current_month = datetime.now().strftime("%b").upper()
-                        atm_strike = round(current_price / 100) * 100
-                        
-                        # Look for CE and PE for ATM and 1-2 strikes around ATM
-                        put_oi = 0
-                        call_oi = 0
-                        
-                        for strike_offset in [0, -100, 100]:
-                            strike = atm_strike + strike_offset
-                            pe_symbol = f"NIFTY{current_month}{int(strike)}PE"
-                            ce_symbol = f"NIFTY{current_month}{int(strike)}CE"
+                    if index_name in _dashboard_options:
+                        option_data = _dashboard_options[index_name]
+                        if "CE" in option_data and "PE" in option_data:
+                            ce_oi = option_data["CE"].get("oi", 0)
+                            pe_oi = option_data["PE"].get("oi", 0)
                             
-                            pe_inst = next((i for i in instruments if i.get("tradingsymbol") == pe_symbol), None)
-                            ce_inst = next((i for i in instruments if i.get("tradingsymbol") == ce_symbol), None)
-                            
-                            if pe_inst:
-                                try:
-                                    pe_quote = kite.quote("NFO", [pe_inst.get("instrument_token")])[
-                                        "NFO:" + str(pe_inst.get("instrument_token"))
-                                    ]
-                                    put_oi += pe_quote.get("oi", 0)
-                                except:
-                                    pass
-                            
-                            if ce_inst:
-                                try:
-                                    ce_quote = kite.quote("NFO", [ce_inst.get("instrument_token")])[
-                                        "NFO:" + str(ce_inst.get("instrument_token"))
-                                    ]
-                                    call_oi += ce_quote.get("oi", 0)
-                                except:
-                                    pass
-                        
-                        if call_oi > 0 and put_oi > 0:
-                            pcr_value = put_oi / call_oi
-                            signals["pcr_value"] = round(pcr_value, 2)
-                            
-                            if pcr_value > 1.5:
-                                pcr_score = 20
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Overly bearish (reversal signal)")
-                            elif pcr_value > 1.0:
-                                pcr_score = 10
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Slightly bearish")
-                            elif pcr_value > 0.5:
-                                pcr_score = -10
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Slightly bullish")
+                            if ce_oi > 0 and pe_oi > 0:
+                                pcr = pe_oi / ce_oi
+                                signals["pcr_ratio"] = round(pcr, 2)
+                                
+                                if pcr > 1.2:
+                                    signals["signals"].append(f"🔄 PCR {pcr:.2f} - Bearish (more puts)")
+                                    pcr_score = -10
+                                elif pcr < 0.8:
+                                    signals["signals"].append(f"🔄 PCR {pcr:.2f} - Bullish (more calls)")
+                                    pcr_score = 10
+                                else:
+                                    signals["signals"].append(f"🔄 PCR {pcr:.2f} - Balanced")
+                                    pcr_score = 0
                             else:
-                                pcr_score = -20
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Overly bullish (reversal signal)")
-                    
-                    elif index == "BANKNIFTY":
-                        instruments = kite.instruments("NFO")
-                        current_month = datetime.now().strftime("%b").upper()
-                        atm_strike = round(current_price / 100) * 100
-                        
-                        put_oi = 0
-                        call_oi = 0
-                        
-                        for strike_offset in [0, -100, 100]:
-                            strike = atm_strike + strike_offset
-                            pe_symbol = f"BANKNIFTY{current_month}{int(strike)}PE"
-                            ce_symbol = f"BANKNIFTY{current_month}{int(strike)}CE"
-                            
-                            pe_inst = next((i for i in instruments if i.get("tradingsymbol") == pe_symbol), None)
-                            ce_inst = next((i for i in instruments if i.get("tradingsymbol") == ce_symbol), None)
-                            
-                            if pe_inst:
-                                try:
-                                    pe_quote = kite.quote("NFO", [pe_inst.get("instrument_token")])[
-                                        "NFO:" + str(pe_inst.get("instrument_token"))
-                                    ]
-                                    put_oi += pe_quote.get("oi", 0)
-                                except:
-                                    pass
-                            
-                            if ce_inst:
-                                try:
-                                    ce_quote = kite.quote("NFO", [ce_inst.get("instrument_token")])[
-                                        "NFO:" + str(ce_inst.get("instrument_token"))
-                                    ]
-                                    call_oi += ce_quote.get("oi", 0)
-                                except:
-                                    pass
-                        
-                        if call_oi > 0 and put_oi > 0:
-                            pcr_value = put_oi / call_oi
-                            signals["pcr_value"] = round(pcr_value, 2)
-                            
-                            if pcr_value > 1.5:
-                                pcr_score = 20
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Overly bearish (reversal signal)")
-                            elif pcr_value > 1.0:
-                                pcr_score = 10
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Slightly bearish")
-                            elif pcr_value > 0.5:
-                                pcr_score = -10
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Slightly bullish")
-                            else:
-                                pcr_score = -20
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Overly bullish (reversal signal)")
-                
+                                pcr_score = 0
+                        else:
+                            pcr_score = 0
+                    else:
+                        pcr_score = 0
                 except Exception as e:
-                    logger.debug(f"PCR calculation skipped for {index}: {e}")
-                    signals["signals"].append("⚠️ PCR data unavailable")
+                    logger.debug(f"PCR calculation skipped: {e}")
                     pcr_score = 0
                 
-                signals["pcr_score"] = pcr_score
+                # ========== FINAL RECOMMENDATION ==========
+                total_score = closing_score + sr_score + volume_score + sector_score + pcr_score
                 
-                # ========== CALCULATE OVERALL PROBABILITY ==========
-                # Weighted scoring (now with PCR)
-                total_score = (
-                    signals.get("closing_strength_score", 0) * 0.30 +  # 30% weight
-                    signals.get("support_resistance_score", 0) * 0.20 +  # 20% weight
-                    sector_sentiment * 0.20 +  # 20% weight
-                    volume_trend_score * 0.15 +  # 15% weight
-                    pcr_score * 0.15  # 15% weight (NEW)
-                )
-                
-                # Convert score to probability (50-75% range)
-                # Score -100 to +100 maps to 50-75%
+                # Map score to probability (50-75%)
                 probability = 62.5 + (total_score / 100) * 12.5
-                probability = max(50, min(75, probability))  # Cap at 50-75%
-                
+                probability = max(50, min(75, probability))
                 signals["overall_probability"] = round(probability, 1)
                 
-                # Recommendation
+                # CE/PE recommendation
                 if probability >= 68:
                     if total_score > 0:
-                        signals["recommendation"] = "HOLD (Bullish)"
-                        signals["recommendation_color"] = "green"
+                        signals["hold_ce_pe"] = "🟢 HOLD CE (Bullish)"
+                        signals["recommendation"] = "BULLISH"
                     else:
-                        signals["recommendation"] = "CONSIDER EXIT (Bearish)"
-                        signals["recommendation_color"] = "red"
+                        signals["hold_ce_pe"] = "🔴 HOLD PE (Bearish)"
+                        signals["recommendation"] = "BEARISH"
                 elif probability >= 62:
-                    signals["recommendation"] = "WATCH (Mixed)"
-                    signals["recommendation_color"] = "yellow"
-                else:
+                    signals["hold_ce_pe"] = "🟡 WATCH (Mixed)"
                     signals["recommendation"] = "NEUTRAL"
-                    signals["recommendation_color"] = "gray"
+                else:
+                    signals["hold_ce_pe"] = "⚪ NO POSITION"
+                    signals["recommendation"] = "NEUTRAL"
                 
-                predictions[index] = signals
+                logger.info(f"{index_name}: {signals['recommendation']} | Prob: {probability}% | Score: {total_score}")
+                predictions[index_name] = signals
                 
             except Exception as e:
-                logger.error(f"Error analyzing {index}: {e}")
-                signals["signals"].append(f"❌ Error: {str(e)}")
-                signals["overall_probability"] = 50
-                predictions[index] = signals
+                logger.error(f"Error analyzing {index_name}: {str(e)}", exc_info=True)
+                signals["signals"].append(f"❌ Analysis Error: {str(e)[:50]}")
+                predictions[index_name] = signals
         
         return {
             "timestamp": datetime.now().isoformat(),
             "data": predictions,
-            "note": "MVP predictions based on closing strength, S/R levels, and sector sentiment. Accuracy ~60-70%"
+            "market_hours": "9:15 AM - 3:30 PM IST",
+            "note": "Next 30 min prediction based on last 30 min data. Updated every minute."
         }
         
     except Exception as e:
-        logger = logging.getLogger("api.server")
-        logger.error(f"Error in next-move endpoint: {e}")
-        return {"error": str(e), "timestamp": datetime.now().isoformat()}
-        logger.error(f"Health check failed: {e}", exc_info=True)
+        logger.error(f"Error in /next-move endpoint: {str(e)}", exc_info=True)
+        return {
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
         return {
             "status": "error",
             "message": str(e)

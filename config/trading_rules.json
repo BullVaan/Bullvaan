@@ -16,18 +16,18 @@
   "signal_rules": {
     "STRONG": {
       "target_pts": 20,
-      "sl_pts": 10,
+      "sl_pts": 25,
       "allow_reentry": true,
       "cooldown_minutes": 3
     },
     "MEDIUM": {
       "target_pts": 12,
-      "sl_pts": 10,
+      "sl_pts": 20,
       "allow_reentry": true,
       "cooldown_minutes": 3
     }
   },
-  "sl_cooldown_minutes": 5,
+  "sl_cooldown_minutes": 2,
   "neutral_cooldown_minutes": 2,
   "test_mode": false
 }
