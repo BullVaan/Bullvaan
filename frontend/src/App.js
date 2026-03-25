@@ -10,7 +10,6 @@ import History from './pages/History';
 import Settings from './pages/Settings';
 import ProtectedRoute from './components/ProtectedRoute';
 import CandlesCharts from './pages/CandlesCharts';
-import NextMove from './pages/NextMove';
 
 function App() {
   return (
@@ -75,14 +74,6 @@ function App() {
             element={
               <ProtectedRoute>
                 <CandlesCharts />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/next-move"
-            element={
-              <ProtectedRoute>
-                <NextMove />
               </ProtectedRoute>
             }
           />

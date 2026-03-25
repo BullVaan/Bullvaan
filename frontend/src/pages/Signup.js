@@ -1,33 +1,44 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { apiCall } from '../utils/api';
 
 function Signup() {
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleSignup = async () => {
     setMessage('');
+    if (!email || !password || !passwordConfirm) {
+      setMessage('All fields required');
+      return;
+    }
+    if (password.length < 6) {
+      setMessage('Password must be at least 6 characters');
+      return;
+    }
+    if (password !== passwordConfirm) {
+      setMessage('Passwords do not match');
+      return;
+    }
     setLoading(true);
     try {
-      const res = await fetch('/api/signup', {
+      const data = await apiCall('/api/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email, password })
       });
-      const data = await res.json();
-      if (res.ok) {
-        setMessage(data.message);
-        setEmail('');
-        setTimeout(() => {
-          navigate('/');
-        }, 2000);
-      } else {
-        setMessage(data.detail || 'Signup failed.');
-      }
-    } catch {
-      setMessage('Signup failed.');
+      // Show success message without auto redirect
+      setMessage(
+        '✅ ' +
+          data.message +
+          ' Click the Sign In button below to login once your account is approved.'
+      );
+    } catch (err) {
+      setMessage(err.message || 'Signup failed.');
     }
     setLoading(false);
   };
@@ -72,12 +83,13 @@ function Signup() {
             fontSize: 15
           }}
         >
-          Enter your email to request access. Admin will share your password.
+          Create your account with email and password.
         </p>
         <input
           placeholder="Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          type="email"
           style={{
             width: '100%',
             padding: 14,
@@ -88,8 +100,49 @@ function Signup() {
             color: '#fff',
             fontSize: 16,
             outline: 'none',
+            marginBottom: 12,
+            transition: 'border 0.2s',
+            boxSizing: 'border-box'
+          }}
+        />
+        <input
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          type="password"
+          style={{
+            width: '100%',
+            padding: 14,
+            marginTop: 0,
+            borderRadius: 10,
+            border: '1px solid #334155',
+            background: '#0f172a',
+            color: '#fff',
+            fontSize: 16,
+            outline: 'none',
+            marginBottom: 12,
+            transition: 'border 0.2s',
+            boxSizing: 'border-box'
+          }}
+        />
+        <input
+          placeholder="Confirm Password"
+          value={passwordConfirm}
+          onChange={(e) => setPasswordConfirm(e.target.value)}
+          type="password"
+          style={{
+            width: '100%',
+            padding: 14,
+            marginTop: 0,
+            borderRadius: 10,
+            border: '1px solid #334155',
+            background: '#0f172a',
+            color: '#fff',
+            fontSize: 16,
+            outline: 'none',
             marginBottom: 8,
-            transition: 'border 0.2s'
+            transition: 'border 0.2s',
+            boxSizing: 'border-box'
           }}
         />
         <button
@@ -123,6 +176,28 @@ function Signup() {
             }}
           >
             {message}
+            {message.includes('✅') && (
+              <button
+                onClick={() => navigate('/login')}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  padding: 10,
+                  marginTop: 14,
+                  background: 'linear-gradient(90deg,#10b981,#34d399)',
+                  border: 'none',
+                  color: 'white',
+                  borderRadius: 8,
+                  fontWeight: 'bold',
+                  fontSize: 15,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px #10b98133',
+                  transition: 'background 0.2s'
+                }}
+              >
+                Sign In
+              </button>
+            )}
           </div>
         )}
         <div style={{ textAlign: 'center', marginTop: 28 }}>

@@ -8,8 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Landmark,
-  ListOrderedIcon,
-  TrendingUp
+  ListOrderedIcon
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -33,7 +32,6 @@ export default function Sidebar() {
       path: '/swing-trade',
       icon: <Landmark size={24} />
     },
-    { name: 'Next Move', path: '/next-move', icon: <TrendingUp size={24} /> },
     {
       name: 'Charting',
       path: '/candles-charts',

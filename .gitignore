@@ -44,3 +44,16 @@ logs/
 *.pem
 *.key
 node_modules
+
+# SQLite databases (using Supabase, not local DB)
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary debug/test scripts
+debug_*.py
+check_*.py
+fix_*.py
+test_api.*
+create_test_*.py
+get_actual_*.py

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { apiCall } from '../utils/api';
 
 function Login() {
   const [email, setEmail] = useState('');
@@ -12,20 +13,22 @@ function Login() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/login', {
+      const data = await apiCall('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });
-      const data = await res.json();
-      if (res.ok) {
-        localStorage.setItem('auth', 'true');
-        navigate('/dashboard');
+      // Store JWT token in localStorage (httpOnly cookie would be more secure in production)
+      localStorage.setItem('access_token', data.access_token);
+      localStorage.setItem('user_id', data.user_id);
+      localStorage.setItem('email', data.email);
+      navigate('/dashboard');
+    } catch (err) {
+      if (err.message.includes('403')) {
+        setError('Your account is pending admin approval.');
       } else {
-        setError(data.detail || 'Invalid credentials');
+        setError(err.message || 'Invalid credentials');
       }
-    } catch {
-      setError('Login failed. Please try again.');
     }
     setLoading(false);
   };
@@ -133,10 +136,21 @@ function Login() {
         {error && (
           <div
             style={{
-              color: '#f87171',
+              color:
+                error.includes('pending') || error.includes('approval')
+                  ? '#fbbf24'
+                  : '#f87171',
+              background:
+                error.includes('pending') || error.includes('approval')
+                  ? '#78350f'
+                  : '#7f1d1d',
+              border: `1px solid ${error.includes('pending') || error.includes('approval') ? '#f59e0b' : '#991b1b'}`,
+              padding: '12px 14px',
+              borderRadius: '8px',
               marginTop: 14,
               textAlign: 'center',
-              fontWeight: 500
+              fontWeight: 500,
+              fontSize: 13
             }}
           >
             {error}

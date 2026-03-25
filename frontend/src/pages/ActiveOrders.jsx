@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { RefreshCw, AlertCircle } from 'lucide-react';
+import { getAuthHeaders } from '../utils/auth';
 
 const API = '';
 
@@ -31,7 +32,7 @@ export default function ActiveOrders() {
       const url = dateStr
         ? `${API}/trades/active?date=${dateStr}`
         : `${API}/trades/active`;
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: getAuthHeaders() });
       const data = await res.json();
       const trades = data.trades || [];
       setActiveTrades(trades);
@@ -75,7 +76,7 @@ export default function ActiveOrders() {
       const sellTime = ist.toISOString().slice(11, 16);
       const res = await fetch(`${API}/trades/${trade.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ sell_price: ltp, sell_time: sellTime })
       });
       if (res.ok) {
@@ -179,6 +180,29 @@ export default function ActiveOrders() {
   const paperCount = activeTrades.filter(
     (t) => (t.mode || 'paper') === 'paper'
   ).length;
+
+  // Calculate live total P&L for selected tab
+  const calculateTotalPnl = () => {
+    let total = 0;
+    filteredTrades.forEach((trade) => {
+      const isOpen = trade.status === 'open';
+      if (isOpen) {
+        const currentLtp = liveLtp[trade.name];
+        if (currentLtp) {
+          const unrealizedPnl =
+            (currentLtp - trade.buy_price) * (trade.quantity || trade.lot);
+          total += unrealizedPnl;
+        }
+      } else {
+        total += trade.pnl || 0;
+      }
+    });
+    return total;
+  };
+
+  const totalPnl = calculateTotalPnl();
+  const totalPnlColor =
+    totalPnl > 0 ? '#22c55e' : totalPnl < 0 ? '#ef4444' : '#64748b';
 
   return (
     <div
@@ -359,6 +383,88 @@ export default function ActiveOrders() {
         })}
       </div>
 
+      {/* LIVE PORTFOLIO P&L SUMMARY */}
+      <div
+        style={{
+          background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+          border: `2px solid ${totalPnl > 0 ? '#22c55e' : totalPnl < 0 ? '#ef4444' : '#334155'}`,
+          borderRadius: 12,
+          padding: '20px 24px',
+          marginBottom: 20,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}
+      >
+        <div>
+          <p
+            style={{
+              fontSize: 12,
+              color: '#64748b',
+              margin: 0,
+              fontWeight: 600,
+              letterSpacing: 0.5,
+              textTransform: 'uppercase'
+            }}
+          >
+            Portfolio P&L ({selectedTab === 'real' ? 'Real Mode' : 'Paper Mode'}
+            )
+          </p>
+          <p
+            style={{
+              fontSize: 14,
+              color: '#cbd5e1',
+              margin: '4px 0 0 0',
+              fontWeight: 500
+            }}
+          >
+            {filteredTrades.length} active {selectedTab} trade
+            {filteredTrades.length !== 1 ? 's' : ''} · Including{' '}
+            {filteredTrades.filter((t) => t.status === 'open').length} open ·{' '}
+            {filteredTrades.filter((t) => t.status === 'closed').length} closed
+          </p>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <p
+            style={{
+              fontSize: 12,
+              color: '#64748b',
+              margin: 0,
+              fontWeight: 600,
+              letterSpacing: 0.5
+            }}
+          >
+            TOTAL P&L
+          </p>
+          <p
+            style={{
+              fontSize: 32,
+              fontWeight: 800,
+              margin: '4px 0 0 0',
+              color: totalPnlColor,
+              fontFamily: 'monospace'
+            }}
+          >
+            {totalPnl > 0 ? '+' : ''}₹{totalPnl.toFixed(2)}
+          </p>
+          <p
+            style={{
+              fontSize: 11,
+              color: totalPnlColor,
+              margin: '2px 0 0 0',
+              fontWeight: 700,
+              opacity: 0.8
+            }}
+          >
+            {totalPnl > 0
+              ? '📈 Profit'
+              : totalPnl < 0
+                ? '📉 Loss'
+                : '↔️ Neutral'}
+          </p>
+        </div>
+      </div>
+
       {/* NO TRADES MESSAGE */}
       {filteredTrades.length === 0 ? (
         <div
@@ -399,6 +505,7 @@ export default function ActiveOrders() {
                   'Buy Price',
                   'Exit Price',
                   'Entry Time',
+                  'Exit Time',
                   'P&L',
                   'Status',
                   'Action'
@@ -522,6 +629,16 @@ export default function ActiveOrders() {
                       }}
                     >
                       {trade.buy_time || '--'}
+                    </td>
+                    <td
+                      style={{
+                        padding: '10px 14px',
+                        fontSize: 12,
+                        textAlign: 'center',
+                        color: '#94a3b8'
+                      }}
+                    >
+                      {trade.sell_time || '--'}
                     </td>
                     <td
                       style={{

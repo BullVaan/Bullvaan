@@ -1,4 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+import { getAuthHeaders } from '../utils/auth';
+
+const BACKEND_URL = 'http://localhost:8000';
 
 // NSE holidays and non-trading days
 const MARKET_HOLIDAYS = {
@@ -18,10 +21,15 @@ const MARKET_HOLIDAYS = {
 };
 
 function isMarketOpen() {
-  const today = new Date();
-  const day = today.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
-  const month = String(today.getMonth() + 1).padStart(2, '0');
-  const date = String(today.getDate()).padStart(2, '0');
+  // Convert to IST (UTC+5:30)
+  const now = new Date();
+  const istTime = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+
+  // Get day and date in IST using UTC methods (since we've already adjusted the time)
+  const day = istTime.getUTCDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
+  const month = String(istTime.getUTCMonth() + 1).padStart(2, '0');
+  const date = String(istTime.getUTCDate()).padStart(2, '0');
+  const year = istTime.getUTCFullYear();
   const dateStr = `${month}-${date}`;
 
   // Check if weekend
@@ -30,7 +38,6 @@ function isMarketOpen() {
   }
 
   // Check if holiday
-  const year = today.getFullYear();
   const holidays = MARKET_HOLIDAYS[year] || [];
   if (holidays.includes(dateStr)) {
     return false;
@@ -45,28 +52,12 @@ export default function PremarketSignals({ symbol = '^NSEI' }) {
   const [error, setError] = useState(null);
   const [marketClosed, setMarketClosed] = useState(false);
 
-  useEffect(() => {
-    // Check if market is open
-    if (!isMarketOpen()) {
-      setMarketClosed(true);
-      setLoading(false);
-      return;
-    }
-
-    setMarketClosed(false);
-    fetchPremarketSignals();
-  }, [symbol]);
-
-  const fetchPremarketSignals = async () => {
+  const fetchPremarketSignals = useCallback(async () => {
     try {
       setLoading(true);
-      const apiHost =
-        window.location.port === '3000'
-          ? `${window.location.hostname}:8000`
-          : window.location.host;
-
       const res = await fetch(
-        `http://${apiHost}/premarket/signals?symbol=${symbol}`
+        `${BACKEND_URL}/premarket/signals?symbol=${symbol}`,
+        { headers: getAuthHeaders() }
       );
       if (!res.ok) throw new Error('Failed to fetch premarket signals');
 
@@ -79,7 +70,19 @@ export default function PremarketSignals({ symbol = '^NSEI' }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [symbol]);
+
+  useEffect(() => {
+    // Check if market is open
+    if (!isMarketOpen()) {
+      setMarketClosed(true);
+      setLoading(false);
+      return;
+    }
+
+    setMarketClosed(false);
+    fetchPremarketSignals();
+  }, [symbol, fetchPremarketSignals]);
 
   if (loading) {
     return (

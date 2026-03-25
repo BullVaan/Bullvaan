@@ -4,6 +4,9 @@ import RoleCard from '../components/RoleCard';
 import OptionSuggestion from '../components/OptionSuggestion';
 import MarketTicker from '../components/MarketTicker';
 import MarketStatus from '../components/MarketStatus';
+import { getAuthHeaders } from '../utils/auth';
+
+const BACKEND_URL = 'http://localhost:8000';
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -31,17 +34,16 @@ function Dashboard() {
   const [autoLoading, setAutoLoading] = useState(false);
   const [tradingMode, setTradingMode] = useState('paper'); // paper or real
   const [showModeWarning, setShowModeWarning] = useState(false);
-  const [pendingMode, setPendingMode] = useState(null);
   const [modeLoading, setModeLoading] = useState(false);
   /* ---------- AUTH CHECK ---------- */
   useEffect(() => {
-    const auth = localStorage.getItem('auth');
-    if (!auth) navigate('/');
+    const token = localStorage.getItem('access_token');
+    if (!token) navigate('/');
   }, [navigate]);
 
   /* ---------- LOAD INDICES & TIMEFRAMES ---------- */
   useEffect(() => {
-    fetch('/indices')
+    fetch(`${BACKEND_URL}/indices`, { headers: getAuthHeaders() })
       .then((res) => res.json())
       .then((data) => {
         if (data && typeof data === 'object') {
@@ -52,7 +54,7 @@ function Dashboard() {
       })
       .catch(() => setError('Backend not running'));
 
-    fetch('/timeframes')
+    fetch(`${BACKEND_URL}/timeframes`, { headers: getAuthHeaders() })
       .then((res) => res.json())
       .then((data) => {
         if (data && typeof data === 'object') {
@@ -69,7 +71,8 @@ function Dashboard() {
       setError('');
 
       const res = await fetch(
-        `/signals?symbol=${selectedSymbol}&timeframe=${selectedTimeframe}`
+        `${BACKEND_URL}/signals?symbol=${selectedSymbol}&timeframe=${selectedTimeframe}`,
+        { headers: getAuthHeaders() }
       );
 
       const data = await res.json();
@@ -101,7 +104,9 @@ function Dashboard() {
   /* ---------- AUTO-TRADER ---------- */
   const fetchAutoStatus = async () => {
     try {
-      const res = await fetch('/auto-trader/status');
+      const res = await fetch(`${BACKEND_URL}/auto-trader/status`, {
+        headers: getAuthHeaders()
+      });
       const data = await res.json();
       setAutoTrader(data);
       setTradingMode(data.trading_mode || 'paper');
@@ -113,23 +118,32 @@ function Dashboard() {
   const toggleAutoTrader = async () => {
     setAutoLoading(true);
     try {
-      const endpoint = autoTrader.enabled ? 'stop' : 'start';
-      await fetch(`/auto-trader/${endpoint}`, { method: 'POST' });
+      const endpoint = autoTrader.enabled_for_user ? 'stop' : 'start';
+      const res = await fetch(`${BACKEND_URL}/auto-trader/${endpoint}`, {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      const data = await res.json();
+
+      if (data.status === 'error' || data.detail) {
+        alert(`❌ Error: ${data.detail || data.message}`);
+      }
+
       await fetchAutoStatus();
     } catch (e) {
       console.error('Auto-trader toggle failed', e);
+      alert(`❌ Auto-trader error: ${e.message}`);
     }
     setAutoLoading(false);
   };
 
   /* ---------- TRADING MODE TOGGLE ---------- */
   const initiateModeSwitchOp = (newMode) => {
-    if (newMode === 'real' && autoTrader.enabled) {
+    if (newMode === 'real' && autoTrader.enabled_for_user) {
       // Warn user that engine is running
       alert('Please stop the autotrader before switching to real money mode');
       return;
     }
-    setPendingMode(newMode);
     if (newMode === 'real') {
       setShowModeWarning(true);
     } else {
@@ -140,9 +154,9 @@ function Dashboard() {
   const confirmModeSwitch = async (newMode) => {
     setModeLoading(true);
     try {
-      const res = await fetch('/auto-trader/trading-mode', {
+      const res = await fetch(`${BACKEND_URL}/auto-trader/trading-mode`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ mode: newMode })
       });
       const data = await res.json();
@@ -178,7 +192,6 @@ function Dashboard() {
     } finally {
       setShowModeWarning(false);
       setModeLoading(false);
-      setPendingMode(null);
     }
   };
 
@@ -194,10 +207,10 @@ function Dashboard() {
 
   // Poll auto-trader status only while engine is active
   useEffect(() => {
-    if (!autoTrader.enabled) return;
+    if (!autoTrader.enabled_for_user) return;
     const autoInterval = setInterval(fetchAutoStatus, 3000);
     return () => clearInterval(autoInterval);
-  }, [autoTrader.enabled]);
+  }, [autoTrader.enabled_for_user]);
 
   /* ---------- CONSENSUS COLOR ---------- */
   const consensusColor =
@@ -546,14 +559,14 @@ function Dashboard() {
             maxWidth: 660,
             margin: '16px auto 0',
             padding: '14px 20px',
-            background: autoTrader.enabled ? '#0a1628' : '#020617',
-            border: `2px solid ${autoTrader.enabled ? '#22c55e' : '#334155'}`,
+            background: autoTrader.enabled_for_user ? '#0a1628' : '#020617',
+            border: `2px solid ${autoTrader.enabled_for_user ? '#22c55e' : '#334155'}`,
             borderRadius: 12,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 16,
-            boxShadow: autoTrader.enabled
+            boxShadow: autoTrader.enabled_for_user
               ? '0 0 20px rgba(34,197,94,0.15)'
               : 'none'
           }}
@@ -565,8 +578,10 @@ function Dashboard() {
                 width: 10,
                 height: 10,
                 borderRadius: '50%',
-                background: autoTrader.enabled ? '#22c55e' : '#475569',
-                boxShadow: autoTrader.enabled ? '0 0 8px #22c55e' : 'none'
+                background: autoTrader.enabled_for_user ? '#22c55e' : '#475569',
+                boxShadow: autoTrader.enabled_for_user
+                  ? '0 0 8px #22c55e'
+                  : 'none'
               }}
             />
             <div>
@@ -574,11 +589,11 @@ function Dashboard() {
                 style={{
                   fontSize: 13,
                   fontWeight: 700,
-                  color: autoTrader.enabled ? '#22c55e' : '#94a3b8',
+                  color: autoTrader.enabled_for_user ? '#22c55e' : '#94a3b8',
                   letterSpacing: 0.5
                 }}
               >
-                AUTO TRADER {autoTrader.enabled ? 'ACTIVE' : 'OFF'}
+                AUTO TRADER {autoTrader.enabled_for_user ? 'ACTIVE' : 'OFF'}
                 {autoTrader.killed && (
                   <span style={{ color: '#ef4444', marginLeft: 8 }}>
                     KILLED
@@ -600,7 +615,7 @@ function Dashboard() {
                   autoTrader.capital ??
                   100000
                 ).toLocaleString('en-IN')}
-                {autoTrader.enabled && (
+                {autoTrader.enabled_for_user && (
                   <>
                     {' '}
                     • Trades: {autoTrader.daily_trade_count || 0}/
@@ -686,13 +701,17 @@ function Dashboard() {
                 fontWeight: 700,
                 fontSize: 13,
                 cursor: autoLoading ? 'wait' : 'pointer',
-                background: autoTrader.enabled ? '#dc2626' : '#22c55e',
+                background: autoTrader.enabled_for_user ? '#dc2626' : '#22c55e',
                 color: '#fff',
                 letterSpacing: 0.5,
                 opacity: autoLoading ? 0.6 : 1
               }}
             >
-              {autoLoading ? '...' : autoTrader.enabled ? 'STOP' : 'START'}
+              {autoLoading
+                ? '...'
+                : autoTrader.enabled_for_user
+                  ? 'STOP'
+                  : 'START'}
             </button>
           </div>
         </div>

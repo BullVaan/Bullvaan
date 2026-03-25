@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getAuthHeaders } from '../utils/auth';
 
-const API = '';
+const API = 'http://localhost:8000';
 
 export default function OptionSuggestion({
   signal,
@@ -42,7 +43,9 @@ export default function OptionSuggestion({
   // ── Fetch open trade for THIS index (no polling) ──
   const fetchOpenTrade = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/trades/active`);
+      const res = await fetch(`${API}/trades/active`, {
+        headers: getAuthHeaders()
+      });
       const data = await res.json();
       const active = data.trades?.find(
         (t) =>
@@ -66,7 +69,7 @@ export default function OptionSuggestion({
     try {
       await fetch(`${API}/trades`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           name: optionName,
           lot: selectedLots,
@@ -95,7 +98,7 @@ export default function OptionSuggestion({
       });
       await fetch(`${API}/trades/${openTrade.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ sell_price: sellPrice, sell_time: ist })
       });
       setOpenTrade(null);

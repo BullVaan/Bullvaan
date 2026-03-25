@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import json
@@ -10,14 +10,34 @@ from typing import Optional
 from dotenv import load_dotenv
 from kiteconnect import KiteConnect, KiteTicker
 from utils.nse_live import fetch_nse_indices
+from utils.auth import get_current_user
+from utils.trades_db import (save_trade, get_user_trades, get_user_trades_by_date, 
+                             get_active_trades, update_trade_sell, delete_trade as db_delete_trade)
 from engine import AutoTrader, _invalidate_trades_cache
-from engine.auto_trader import _load_trades, _save_trades
+import engine.auto_trader as auto_trader_module
+from utils.auto_trader_db import set_auto_trader_user_id, clear_auto_trader_user_id
 from engine.premarket_signals import PremarketSignalEngine
+
+# Load trading rules config
+_CONFIG_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'trading_rules.json')
+with open(_CONFIG_FILE, 'r') as f:
+    _config = json.load(f)
 from engine.premarket_alerts import PremarketAlertManager, AlertSeverity
 from utils.nifty50_stocks import get_nifty50_symbols
 
 # Load environment variables
 load_dotenv()
+
+# ========== MULTI-SESSION AUTO-TRADER TRACKING ==========
+# Each session (user/browser/device) gets its own independent AutoTrader instance
+# Format: {session_id: (AutoTrader_instance, user_id, timestamp), ...}
+# This allows multiple concurrent traders to run simultaneously
+_auto_traders_by_session = {}
+_auto_traders_lock = threading.Lock()  # Protect dict during concurrent access
+
+# Get references to load_trades and save_trades
+_load_trades = auto_trader_module._load_trades
+_save_trades = auto_trader_module._save_trades
 
 # Initialize Zerodha Kite Connect
 api_key = os.getenv("API_KEY")
@@ -146,13 +166,15 @@ from strategies import (
 # data utils — Zerodha for strategies (replaced Yahoo Finance)
 from utils import fetch_zerodha_history, fetch_india_vix_zerodha
 
-from api.signup import router as signup_router
+# Import Auth routers (login/signup)
 from api.login import router as login_router
+from api.signup import router as signup_router
 
 app = FastAPI(title="Bullvan Trading API")
 
-app.include_router(signup_router, prefix="/api")
-app.include_router(login_router, prefix="/api")
+# Register auth routers
+app.include_router(login_router, prefix="/api", tags=["auth"])
+app.include_router(signup_router, prefix="/api", tags=["auth"])
 
 # =========================
 # Setup Logging
@@ -574,7 +596,7 @@ _signal_cache = {}  # {symbol: {"result": dict, "timestamp": float}}
 SIGNAL_CACHE_TTL = 300  # 5 minutes — matches the 5m candle timeframe; no point recalculating on incomplete candles
 
 @app.get("/signals")
-def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
+def get_signals(symbol: str = "^NSEI", timeframe: str = "5m", current_user: dict = Depends(get_current_user)):
     """
     Returns signals for selected index
     
@@ -687,7 +709,7 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
         strength_dir = category_consensus(strength_signals)
 
         # ═══════════════════════════════════════════════════════
-        # OVERALL CONSENSUS: Trend + Strength must agree.
+        # OVERALL CONSENSUS: Trend & Strength must agree
         # Momentum must be NEUTRAL or same direction.
         # Anything else → NEUTRAL.
         # ═══════════════════════════════════════════════════════
@@ -706,12 +728,11 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
                 # Trend + Strength agree, Momentum neutral → MEDIUM
                 consensus = trend_dir
                 signal_strength = "MEDIUM"
-            # else: Momentum opposes → NEUTRAL (no trade)
+            # else: Momentum opposes → NEUTRAL
 
-        # response
         result = {
             "symbol": symbol,
-            "index_name": SUPPORTED_INDICES[symbol],
+            "service": SYMBOL_MAP.get(symbol, symbol),
             "timeframe": timeframe,
             "timeframe_info": TIMEFRAME_CONFIG[timeframe],
             "price": round(current_price, 2),
@@ -758,7 +779,7 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
 # Zerodha Options Chain - Near Expiry
 # =========================
 @app.get("/options")
-def get_options(symbol: str = "NIFTY", strike: int = None):
+def get_options(symbol: str = "NIFTY", strike: int = None, current_user: dict = Depends(get_current_user)):
     """
     Fetch live option prices from Zerodha for current month expiry
     symbol: NIFTY or BANKNIFTY
@@ -1499,7 +1520,7 @@ def nifty50_movers():
     }
 
 @app.get("/history")
-def get_history(symbol: str):
+def get_history(symbol: str, current_user: dict = Depends(get_current_user)):
     """Get intraday price history for a stock using Kite API"""
     import pandas as pd
     try:
@@ -1538,19 +1559,23 @@ def get_history(symbol: str):
         ]
     except Exception as e:
         logger.error(f"Error fetching history for {symbol}: {e}")
-        return {"error": str(e)} 
+        return {"error": str(e)}
 
 
 @app.get("/candles")
-def get_candles(symbol: str, interval: str = "5m"):
+def get_candles(symbol: str, interval: str = "5m", current_user: dict = Depends(get_current_user)):
     """
     Return OHLC candles for indices (NIFTY, BANKNIFTY, SENSEX) and stocks using Zerodha API.
     All data sourced from Kite API for consistency and reliability. Supports 1, 5, 15 minute intervals.
+    During market hours, includes TODAY's partial candles. After hours, includes yesterday's closed candles.
     """
     import logging
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     import pandas as pd
     try:
+        # IST timezone (Kite API expects IST, not UTC)
+        IST = timezone(timedelta(hours=5, minutes=30))
+        
         zerodha_indices = ["NIFTY", "BANKNIFTY", "SENSEX"]
         interval_map = {"1m": "minute", "5m": "5minute", "15m": "15minute"}
         # Accept both "1m" and "1minute" etc.
@@ -1559,6 +1584,10 @@ def get_candles(symbol: str, interval: str = "5m"):
             return {"error": "Supported intervals: 1m, 5m, 15m"}
         kite_interval = interval_map[interval_key]
         symbol_up = symbol.upper()
+        
+        # Use IST for all date calculations (Kite API expects IST)
+        now_ist = datetime.now(IST)
+        
         if symbol_up in zerodha_indices:
             cfg = SYMBOL_CONFIG.get(symbol_up, SYMBOL_CONFIG["NIFTY"])
             spot_key = cfg["spot"]
@@ -1566,8 +1595,11 @@ def get_candles(symbol: str, interval: str = "5m"):
             token = _get_spot_token(symbol_up)
             if not token:
                 return {"error": f"Instrument token not found for {symbol_up}"}
-            to_date = datetime.now()
-            from_date = to_date - timedelta(days=10)
+            
+            to_date = now_ist
+            # Fetch last 3 days of candles + today's live candles
+            from_date = now_ist - timedelta(days=3)
+            
             candles = kite.historical_data(token, from_date, to_date, kite_interval)
             # Format for frontend
             out = []
@@ -1603,13 +1635,10 @@ def get_candles(symbol: str, interval: str = "5m"):
                 if not token:
                     return []
                 
-                # Fetch historical data from Kite using requested interval
-                to_date = datetime.now()
-                # For intraday intervals (1m, 5m, 15m), fetch last 2 days; for daily, fetch 10 days
-                if kite_interval in ["minute", "5minute", "15minute"]:
-                    from_date = to_date - timedelta(days=2)
-                else:
-                    from_date = to_date - timedelta(days=10)
+                # Fetch historical data from Kite using requested interval (IST for Kite API)
+                to_date = now_ist
+                # Fetch last 3 days of candles + today's live candles
+                from_date = now_ist - timedelta(days=3)
                 
                 candles = kite.historical_data(token, from_date, to_date, kite_interval)
                 
@@ -1712,9 +1741,12 @@ async def ws_candles(websocket: WebSocket, symbol: str, interval: str):
         key = (symbol, interval)
         from fastapi.encoders import jsonable_encoder
         import logging
+        from datetime import datetime, timedelta, timezone
+        
         while True:
             candles = list(_live_candles[key])
-            # Fallback: if no live candles (market closed), fetch historical
+            
+            # Fallback: if no live candles, fetch historical
             if not candles:
                 try:
                     from datetime import datetime, timedelta
@@ -1722,9 +1754,24 @@ async def ws_candles(websocket: WebSocket, symbol: str, interval: str):
                     interval_map = {"1m": "minute", "5m": "5minute", "15m": "15minute"}
                     kite_interval = interval_map.get(interval, "5minute")
                     token = _get_spot_token(symbol)
+                    
+                    # Check if market is open (9:15 AM - 3:30 PM IST)
+                    utc_now = datetime.utcnow()
+                    ist_now = utc_now + timedelta(hours=5, minutes=30)
+                    ist_hour = ist_now.hour
+                    ist_minute = ist_now.minute
+                    is_market_open = (9 <= ist_hour < 15) or (ist_hour == 15 and ist_minute <= 30)
+                    
                     if token:
+                        # If market is open, fetch from today morning; otherwise fetch last 2 days
                         to_date = datetime.now()
-                        from_date = to_date - timedelta(days=2)
+                        if is_market_open:
+                            # Fetch from today's market open (9:15) to now
+                            from_date = to_date.replace(hour=9, minute=15, second=0, microsecond=0)
+                        else:
+                            # Market closed, fetch last 2 days
+                            from_date = to_date - timedelta(days=2)
+                        
                         hist = kite.historical_data(token, from_date, to_date, kite_interval)
                         candles = [
                             {
@@ -1736,38 +1783,35 @@ async def ws_candles(websocket: WebSocket, symbol: str, interval: str):
                             }
                             for c in hist
                         ]
+                        
+                        if is_market_open and not candles:
+                            logging.info(f"No historical candles yet for {symbol} during market hours (too early)")
                 except Exception as e:
                     logging.error(f"WS fallback candle error: {e}")
+            
             await websocket.send_json(jsonable_encoder(candles))
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         print("candle client disconnected")
 
 @app.get("/trades/active")
-def get_active_trades(date: str = None):
-    """Get trades for a specific date (or today if not provided). Shows both open and closed trades."""
-    trades = _load_trades()
-    
-    # Get the date to fetch
-    if date is None:
-        ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
-        date = ist_now.strftime('%Y-%m-%d')
-    
-    # Return all trades from the specified date (both open and closed)
-    date_trades = [t for t in trades if t.get('date') == date]
-    
-    # Calculate P&L by mode
-    real_pnl = sum(t.get('pnl', 0) for t in date_trades if (t.get('mode') or 'paper') == 'real')
-    paper_pnl = sum(t.get('pnl', 0) for t in date_trades if (t.get('mode') or 'paper') == 'paper')
-    
-    return {
-        "trades": date_trades,
-        "date": date,
-        "pnl_by_mode": {
-            "real": round(real_pnl, 2),
-            "paper": round(paper_pnl, 2)
-        }
-    }
+def get_active_trades_endpoint(date: str = None, current_user: dict = Depends(get_current_user)):
+    """Get trades for a specific date (or today if not provided). Shows both open and closed trades.
+    Uses database backend for scalability.
+    """
+    try:
+        user_id = current_user.get('user_id')
+        
+        if date is None:
+            ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+            date = ist_now.strftime('%Y-%m-%d')
+        
+        # Get active trades from database
+        result = get_active_trades(user_id, date)
+        return result
+    except Exception as e:
+        logger.error(f"Error in get_active_trades: {e}", exc_info=True)
+        return {"error": str(e)}
 
 @app.post("/trades/live-ltp")
 def get_trades_live_ltp(body: dict = Body(...)):
@@ -1794,29 +1838,29 @@ def get_trades_live_ltp(body: dict = Body(...)):
     return result
 
 @app.get("/trades")
-def get_trades(date: str = None):
+def get_trades_endpoint(date: str = None, current_user: dict = Depends(get_current_user)):
     """
-    Get trades. If date is provided (YYYY-MM-DD), filter by that date.
+    Get trades from database. If date is provided (YYYY-MM-DD), filter by that date.
     Defaults to today (IST).
     """
-    trades = _load_trades()
-    if date is None:
-        # Default to today IST
-        date = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-%d')
-    filtered = [t for t in trades if t.get('date') == date]
-    # Calculate day P&L
-    total_pnl = sum(t.get('pnl', 0) for t in filtered)
-    return {
-        "date": date,
-        "total_pnl": round(total_pnl, 2),
-        "trade_count": len(filtered),
-        "trades": filtered
-    }
+    try:
+        user_id = current_user.get('user_id')
+        
+        if date is None:
+            # Default to today IST
+            date = (datetime.utcnow() + timedelta(hours=5, minutes=30)).strftime('%Y-%m-%d')
+        
+        # Get trades from database
+        result = get_user_trades_by_date(user_id, date)
+        return result
+    except Exception as e:
+        logger.error(f"Error in get_trades: {e}", exc_info=True)
+        return {"error": str(e)}
 
 @app.post("/trades")
-def add_trade(trade: dict = Body(...)):
+def add_trade(trade: dict = Body(...), current_user: dict = Depends(get_current_user)):
     """
-    Add a new trade. Expected fields:
+    Add a new trade to database. Expected fields:
     - name: str (option name e.g. "NIFTY 25700 CE")
     - lot: int
     - buy_price: float
@@ -1827,8 +1871,8 @@ def add_trade(trade: dict = Body(...)):
     If in REAL mode, places actual Kite order
     """
     try:
-        trades = _load_trades()
         ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        user_id = current_user.get('user_id')
 
         buy_price = float(trade.get('buy_price', 0))
         sell_price = float(trade.get('sell_price', 0))
@@ -1837,7 +1881,8 @@ def add_trade(trade: dict = Body(...)):
         option_name = trade.get('name', '')
 
         new_trade = {
-            "id": int(ist_now.timestamp() * 1000),
+            "id": str(int(ist_now.timestamp() * 1000)),
+            "user_id": user_id,
             "date": ist_now.strftime('%Y-%m-%d'),
             "name": option_name,
             "lot": lot,
@@ -1848,38 +1893,51 @@ def add_trade(trade: dict = Body(...)):
             "sell_time": trade.get('sell_time', ''),
             "pnl": round((sell_price - buy_price) * quantity, 2) if sell_price else 0,
             "status": "closed" if sell_price else "open",
-            "auto": False,  # Manual trade
-            "mode": auto_trader.trading_mode  # Track trading mode
+            "auto": False,
+            "mode": auto_trader.trading_mode
         }
 
         # Real trading: place BUY order via Kite
         if auto_trader.trading_mode == "real" and auto_trader.kite and not sell_price:
             try:
-                # Parse option details: "NIFTY 25700 CE" -> prefix, strike, opt_type
                 parts = option_name.split()
                 if len(parts) >= 3:
                     prefix = parts[0]
                     strike = float(parts[1])
                     opt_type = parts[2]
                     
-                    # Get trading symbol from auto_trader
                     tradingsymbol = auto_trader._get_option_tradingsymbol(prefix, strike, opt_type)
                     if tradingsymbol:
-                        # Place BUY order
+                        signal_strength = trade.get('signal_strength', 'STRONG')
+                        
+                        if prefix in _config.get('signal_rules', {}) and signal_strength in _config['signal_rules'][prefix]:
+                            rule = _config['signal_rules'][prefix][signal_strength]
+                        elif "NIFTY" in _config.get('signal_rules', {}) and signal_strength in _config['signal_rules']["NIFTY"]:
+                            rule = _config['signal_rules']["NIFTY"][signal_strength]
+                        else:
+                            rule = {"target_pts": 20, "sl_pts": 25}
+                        
+                        sl_pts = rule.get('sl_pts', 25)
+                        tp_pts = rule.get('target_pts', 20)
+                        
                         order_id = auto_trader.kite.place_order(
-                            variety=auto_trader.kite.VARIETY_REGULAR,
+                            variety=auto_trader.kite.VARIETY_BO,
                             exchange="NFO" if prefix != "SENSEX" else "BFO",
                             tradingsymbol=tradingsymbol,
                             transaction_type=auto_trader.kite.TRANSACTION_TYPE_BUY,
                             quantity=quantity,
                             order_type=auto_trader.kite.ORDER_TYPE_MARKET,
-                            product=auto_trader.kite.PRODUCT_MIS,
+                            product=auto_trader.kite.PRODUCT_BO,
+                            stoploss=sl_pts,
+                            squareoff=tp_pts,
+                            trailing_stoploss=0,
                             tag=f"manual_buy_{new_trade['id']}"
                         )
                         
                         new_trade["order_id"] = order_id
                         new_trade["kite_tradingsymbol"] = tradingsymbol
-                        logger.info(f"MANUAL REAL BUY: {option_name} | {quantity}qty | ₹{buy_price} | OrderID={order_id}")
+                        new_trade["is_bo_trade"] = True
+                        logger.info(f"MANUAL REAL BUY (BO): {option_name} | {quantity}qty | ₹{buy_price} | OrderID={order_id}")
                     else:
                         logger.error(f"Could not get tradingsymbol for {option_name}")
                         new_trade["error"] = "Could not resolve trading symbol"
@@ -1887,112 +1945,227 @@ def add_trade(trade: dict = Body(...)):
                 logger.error(f"Failed to place manual real buy order: {e}", exc_info=True)
                 new_trade["error"] = str(e)
 
-        trades.append(new_trade)
-        _save_trades(trades)
+        # Save to database
+        saved_trade = save_trade(new_trade)
         _invalidate_trades_cache()
-        return new_trade
+        return saved_trade
     except Exception as e:
         logger.error(f"Error in add_trade: {e}", exc_info=True)
         return {"error": str(e)}
 
 @app.put("/trades/{trade_id}")
-def update_trade(trade_id: int, trade: dict = Body(...)):
+def update_trade(trade_id: str, trade: dict = Body(...), current_user: dict = Depends(get_current_user)):
     """Update a trade (e.g. close it with sell_price and sell_time)
     
     If in REAL mode and closing a trade, places actual Kite sell order
     """
     try:
-        trades = _load_trades()
-        for t in trades:
-            if t['id'] == trade_id:
-                # Check if this is a SELL action (close trade)
-                new_sell_price = trade.get('sell_price')
-                is_closing = new_sell_price and not t.get('sell_price')
-                
-                # Real trading: place SELL order via Kite before updating
-                if auto_trader.trading_mode == "real" and auto_trader.kite and is_closing:
-                    try:
-                        tradingsymbol = t.get("kite_tradingsymbol")
-                        if tradingsymbol:
-                            qty = int(t.get('quantity', t['lot']))
-                            exchange = "NFO" if "SENSEX" not in tradingsymbol else "BFO"
-                            
-                            # Place SELL order
-                            sell_order_id = auto_trader.kite.place_order(
-                                variety=auto_trader.kite.VARIETY_REGULAR,
-                                exchange=exchange,
-                                tradingsymbol=tradingsymbol,
-                                transaction_type=auto_trader.kite.TRANSACTION_TYPE_SELL,
-                                quantity=qty,
-                                order_type=auto_trader.kite.ORDER_TYPE_MARKET,
-                                product=auto_trader.kite.PRODUCT_MIS,
-                                tag=f"manual_sell_{trade_id}"
-                            )
-                            
-                            t["sell_order_id"] = sell_order_id
-                            logger.info(f"MANUAL REAL SELL: {t['name']} | {qty}qty | ₹{new_sell_price} | OrderID={sell_order_id}")
-                        else:
-                            logger.warning(f"No tradingsymbol found for manual sell of trade {trade_id}")
-                    except Exception as e:
-                        logger.error(f"Failed to place manual real sell order: {e}", exc_info=True)
-                        t["sell_error"] = str(e)
-                
-                # Update trade record
-                for key, val in trade.items():
-                    t[key] = val
-                
-                # Recalculate P&L
-                if t.get('sell_price'):
-                    qty = int(t.get('quantity', t['lot']))
-                    t['pnl'] = round((float(t['sell_price']) - float(t['buy_price'])) * qty, 2)
-                    t['status'] = 'closed'
-                
-                _save_trades(trades)
-                _invalidate_trades_cache()
-                return t
+        user_id = current_user.get('user_id')
         
-        return {"error": "Trade not found"}
+        # Check if this is a SELL action (close trade) - get existing trade first
+        from utils.trades_db import get_trade
+        existing_trade = get_trade(trade_id)
+        if not existing_trade:
+            return {"error": "Trade not found"}
+        
+        # Verify user ownership
+        if existing_trade.get('user_id') != user_id:
+            return {"error": "Unauthorized"}
+        
+        new_sell_price = trade.get('sell_price')
+        is_closing = new_sell_price and not existing_trade.get('sell_price')
+        
+        # Real trading: place SELL order via Kite before updating
+        if auto_trader.trading_mode == "real" and auto_trader.kite and is_closing:
+            try:
+                tradingsymbol = existing_trade.get("kite_tradingsymbol")
+                if tradingsymbol:
+                    qty = int(existing_trade.get('quantity', existing_trade.get('lot', 1)))
+                    exchange = "NFO" if "SENSEX" not in tradingsymbol else "BFO"
+                    
+                    sell_order_id = auto_trader.kite.place_order(
+                        variety=auto_trader.kite.VARIETY_REGULAR,
+                        exchange=exchange,
+                        tradingsymbol=tradingsymbol,
+                        transaction_type=auto_trader.kite.TRANSACTION_TYPE_SELL,
+                        quantity=qty,
+                        order_type=auto_trader.kite.ORDER_TYPE_MARKET,
+                        product=auto_trader.kite.PRODUCT_MIS,
+                        tag=f"manual_sell_{trade_id}"
+                    )
+                    
+                    trade["sell_order_id"] = sell_order_id
+                    logger.info(f"MANUAL REAL SELL: {existing_trade['name']} | {qty}qty | ₹{new_sell_price} | OrderID={sell_order_id}")
+                else:
+                    logger.warning(f"No tradingsymbol found for manual sell of trade {trade_id}")
+            except Exception as e:
+                logger.error(f"Failed to place manual real sell order: {e}", exc_info=True)
+                trade["sell_error"] = str(e)
+        
+        # Update trade in database
+        updated_trade = update_trade_sell(trade_id, user_id, 
+                                         trade.get('sell_price', existing_trade.get('sell_price')),
+                                         trade.get('sell_time', existing_trade.get('sell_time')))
+        _invalidate_trades_cache()
+        return updated_trade
     except Exception as e:
         logger.error(f"Error in update_trade: {e}", exc_info=True)
         return {"error": str(e)}
 
 @app.delete("/trades/{trade_id}")
-def delete_trade(trade_id: int):
-    """Delete a trade by ID"""
-    trades = _load_trades()
-    trades = [t for t in trades if t['id'] != trade_id]
-    _save_trades(trades)
-    return {"status": "deleted"}
+def delete_trade_endpoint(trade_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a trade by ID from database"""
+    try:
+        user_id = current_user.get('user_id')
+        
+        # Delete from database with user verification
+        result = db_delete_trade(trade_id, user_id)
+        if result.get('error'):
+            return result
+        
+        _invalidate_trades_cache()
+        return {"status": "deleted"}
+    except Exception as e:
+        logger.error(f"Error in delete_trade: {e}", exc_info=True)
+        return {"error": str(e)}
 
 
 # =========================
 # Auto-Trader API Endpoints
 # =========================
 @app.get("/auto-trader/status")
-def auto_trader_status():
-    """Get auto-trader engine status"""
-    return auto_trader.get_status()
+def auto_trader_status(current_user: dict = Depends(get_current_user)):
+    """Get auto-trader engine status for this session
+    
+    Returns status for THIS session's trader specifically.
+    """
+    user_id = current_user.get('user_id')
+    session_id = current_user.get('session_id')
+    
+    with _auto_traders_lock:
+        # Check if this session has a running trader
+        if session_id in _auto_traders_by_session:
+            trader, stored_user_id, ts = _auto_traders_by_session[session_id]
+            if stored_user_id == user_id:
+                # Get status from this session's trader
+                status = trader.get_status()
+                status['enabled_for_session'] = trader.enabled
+                status['session_id'] = session_id
+                status['user_id'] = user_id
+                status['active_sessions'] = len(_auto_traders_by_session)
+                return status
+        
+        # No trader running for this session
+        return {
+            "enabled": False,
+            "running": False,
+            "enabled_for_session": False,
+            "session_id": session_id,
+            "user_id": user_id,
+            "active_sessions": len(_auto_traders_by_session),
+            "open_positions": 0,
+            "daily_pnl": 0.0
+        }
 
 @app.post("/auto-trader/start")
-async def auto_trader_start():
-    """Start the auto-trading engine"""
-    if auto_trader.enabled:
-        return {"status": "already_running"}
-    loop = asyncio.get_running_loop()
-    auto_trader.start(loop=loop)
-    return {"status": "started", "mode": "paper"}
+async def auto_trader_start(current_user: dict = Depends(get_current_user)):
+    """Start the auto-trading engine for this session
+    
+    Each session (browser tab/device) gets independent trader instance.
+    Multiple sessions can run simultaneously.
+    """
+    logger = logging.getLogger("api.server")
+    user_id = current_user.get('user_id')
+    session_id = current_user.get('session_id')
+    
+    try:
+        with _auto_traders_lock:
+            # Check if this session already has a running auto-trader
+            if session_id in _auto_traders_by_session:
+                existing_trader, existing_uid, ts = _auto_traders_by_session[session_id]
+                if existing_trader.enabled:
+                    return {"status": "already_running_for_session", "session_id": session_id, "user_id": user_id}
+            
+            # Create new AutoTrader instance for this session
+            logger.info(f"Creating auto-trader instance for session {session_id} (user {user_id})")
+            
+            # Create fresh trader with required callback functions and user context
+            new_trader = AutoTrader(
+                get_signal_fn=auto_trader.get_signal,
+                get_option_ltp_fn=auto_trader.get_option_ltp,
+                get_entry_snapshot_fn=auto_trader.get_entry_snapshot,
+                kite=auto_trader.kite,
+                user_id=user_id  # Pass user_id for multi-session support
+            )
+            
+            # Store this session's trader
+            import time
+            _auto_traders_by_session[session_id] = (new_trader, user_id, time.time())
+            
+            # Set user context for database operations (trades will be tagged with user_id)
+            set_auto_trader_user_id(user_id)
+            
+            # Start the trader
+            loop = asyncio.get_running_loop()
+            new_trader.start(loop=loop)
+            logger.info(f"Auto-trader started for session {session_id} (user {user_id})")
+            
+            return {
+                "status": "started",
+                "session_id": session_id,
+                "user_id": user_id,
+                "mode": "paper",
+                "active_sessions": len(_auto_traders_by_session)
+            }
+    except Exception as e:
+        logger.error(f"Error starting auto-trader for session {session_id}: {e}", exc_info=True)
+        return {"status": "error", "detail": str(e)}
 
 @app.post("/auto-trader/stop")
-async def auto_trader_stop():
-    """Stop the auto-trading engine"""
-    if not auto_trader.enabled:
-        return {"status": "already_stopped"}
-    # Close all open positions before stopping
-    auto_trader.stop()
-    return {"status": "stopped"}
+async def auto_trader_stop(current_user: dict = Depends(get_current_user)):
+    """Stop the auto-trading engine for this session
+    
+    Only stops the trader for THIS session.
+    Other sessions' traders continue running independently.
+    """
+    logger = logging.getLogger("api.server")
+    user_id = current_user.get('user_id')
+    session_id = current_user.get('session_id')
+    
+    try:
+        with _auto_traders_lock:
+            # Check if this session has a running trader
+            if session_id not in _auto_traders_by_session:
+                return {"status": "not_running_for_session", "session_id": session_id}
+            
+            trader, stored_user_id, ts = _auto_traders_by_session[session_id]
+            
+            # Verify the user matches (security check)
+            if stored_user_id != user_id:
+                logger.warning(f"User {user_id} tried to stop trader for different user {stored_user_id}")
+                return {"status": "error", "detail": "Session not owned by this user"}
+            
+            # Stop only this session's trader
+            if trader.enabled:
+                trader.stop()
+                logger.info(f"Auto-trader stopped for session {session_id}")
+            
+            # Remove from tracking
+            del _auto_traders_by_session[session_id]
+            clear_auto_trader_user_id()  # clear user context
+            
+            return {
+                "status": "stopped",
+                "session_id": session_id,
+                "user_id": user_id,
+                "active_sessions": len(_auto_traders_by_session)
+            }
+    except Exception as e:
+        logger.error(f"Error stopping auto-trader for session {session_id}: {e}", exc_info=True)
+        return {"status": "error", "detail": str(e)}
 
 @app.post("/auto-trader/test-mode")
-async def auto_trader_test_mode(body: dict = Body(...)):
+async def auto_trader_test_mode(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     """Toggle test mode (bypasses market hours check)"""
     import engine.auto_trader as at_module
     at_module.TEST_MODE = body.get("enabled", False)
@@ -2000,7 +2173,7 @@ async def auto_trader_test_mode(body: dict = Body(...)):
 
 
 @app.post("/auto-trader/trading-mode")
-async def auto_trader_set_mode(body: dict = Body(...)):
+async def auto_trader_set_mode(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
     """Switch trading mode between paper and real
     
     Request body: {"mode": "paper" | "real"}
@@ -2024,7 +2197,7 @@ async def auto_trader_set_mode(body: dict = Body(...)):
 
 
 @app.get("/auto-trader/account-balance")
-def auto_trader_account_balance():
+def auto_trader_account_balance(current_user: dict = Depends(get_current_user)):
     """Get real account balance (Kite API)
     
     Returns:
@@ -2047,10 +2220,174 @@ def auto_trader_account_balance():
 
 
 # =========================
+# User Kite Credentials API
+# =========================
+
+@app.post("/user/kite-credentials/save")
+def save_kite_credentials(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
+    """Save user's Kite API credentials (encrypted in database)
+    
+    Request body:
+    {
+        "api_key": "your_zerodha_api_key",
+        "access_token": "your_zerodha_access_token"
+    }
+    
+    These credentials are used for paper/real trading orders.
+    Chart data and market signals continue using admin credentials.
+    
+    Returns:
+    - status: "ok" or "error"
+    """
+    from utils.user_credentials import save_user_credentials
+    
+    logger = logging.getLogger("api.server")
+    user_id = current_user.get('user_id')
+    
+    try:
+        api_key = body.get('api_key', '').strip()
+        access_token = body.get('access_token', '').strip()
+        
+        if not api_key or not access_token:
+            return {"status": "error", "detail": "API key and access token are required"}
+        
+        save_user_credentials(user_id, api_key, access_token)
+        logger.info(f"User {user_id} saved Kite credentials")
+        return {"status": "ok", "detail": "Credentials saved and encrypted"}
+    except Exception as e:
+        logger.error(f"Error saving credentials for user {user_id}: {e}")
+        return {"status": "error", "detail": str(e)}
+
+
+@app.get("/user/kite-credentials/status")
+def get_kite_credentials_status(current_user: dict = Depends(get_current_user)):
+    """Check if user has saved Kite credentials
+    
+    Returns:
+    - has_credentials: true/false
+    - message: helpful message
+    """
+    from utils.user_credentials import user_has_credentials
+    
+    user_id = current_user.get('user_id')
+    has_creds = user_has_credentials(user_id)
+    
+    return {
+        "has_credentials": has_creds,
+        "message": "Credentials saved" if has_creds else "No credentials saved - needed for trading"
+    }
+
+
+@app.delete("/user/kite-credentials")
+def delete_kite_credentials(current_user: dict = Depends(get_current_user)):
+    """Delete user's saved Kite credentials
+    
+    Returns:
+    - status: "ok" or "error"
+    """
+    from utils.user_credentials import delete_user_credentials
+    
+    logger = logging.getLogger("api.server")
+    user_id = current_user.get('user_id')
+    
+    try:
+        delete_user_credentials(user_id)
+        logger.info(f"User {user_id} deleted Kite credentials")
+        return {"status": "ok", "detail": "Credentials deleted"}
+    except Exception as e:
+        logger.error(f"Error deleting credentials for user {user_id}: {e}")
+        return {"status": "error", "detail": str(e)}
+
+
+# =========================
+# Admin User Approval API
+# =========================
+
+@app.get("/admin/pending-users")
+def get_pending_users():
+    """Get list of pending users awaiting approval
+    
+    Returns:
+    - users: List of {id, email, created_at}
+    """
+    logger = logging.getLogger("api.server")
+    try:
+        result = supabase.table('users').select('id, email, created_at').eq('is_approved', False).execute()
+        logger.info(f"Retrieved {len(result.data)} pending users")
+        return {"users": result.data or [], "count": len(result.data or [])}
+    except Exception as e:
+        logger.error(f"Error fetching pending users: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch pending users: {str(e)}")
+
+
+@app.post("/admin/approve-user/{email}")
+def approve_user(email: str):
+    """Approve a pending user by email
+    
+    Args:
+    - email: Email of user to approve
+    
+    Returns:
+    - status: "ok" or "error"
+    - message: Approval status
+    """
+    logger = logging.getLogger("api.server")
+    try:
+        # Check if user exists
+        result = supabase.table('users').select('id, email, is_approved').eq('email', email).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail=f"User {email} not found")
+        
+        user = result.data[0]
+        if user.get('is_approved'):
+            return {"status": "ok", "message": f"User {email} is already approved"}
+        
+        # Update is_approved to True
+        update_result = supabase.table('users').update({'is_approved': True}).eq('email', email).execute()
+        logger.info(f"Admin approved user: {email}")
+        
+        return {"status": "ok", "message": f"User {email} has been approved successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error approving user {email}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to approve user: {str(e)}")
+
+
+@app.post("/admin/reject-user/{email}")
+def reject_user(email: str):
+    """Reject/delete a pending user
+    
+    Args:
+    - email: Email of user to reject
+    
+    Returns:
+    - status: "ok" or "error"
+    """
+    logger = logging.getLogger("api.server")
+    try:
+        # Check if user exists
+        result = supabase.table('users').select('id').eq('email', email).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail=f"User {email} not found")
+        
+        # Delete user
+        delete_result = supabase.table('users').delete().eq('email', email).execute()
+        logger.info(f"Admin rejected user: {email}")
+        
+        return {"status": "ok", "message": f"User {email} has been rejected"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rejecting user {email}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reject user: {str(e)}")
+
+
+# =========================
 # Premarket Signals API
 # =========================
 @app.get("/premarket/signals")
-def get_premarket_signals(symbol: str = "^NSEI"):
+def get_premarket_signals(symbol: str = "^NSEI", current_user: dict = Depends(get_current_user)):
     """
     Get premarket signals for a symbol before market opens.
     Can be called anytime - returns prediction based on historical patterns.
@@ -2065,7 +2402,7 @@ def get_premarket_signals(symbol: str = "^NSEI"):
 
 
 @app.get("/premarket/signals/batch")
-def get_premarket_signals_batch(symbols: str = "^NSEI,^NSEBANK"):
+def get_premarket_signals_batch(symbols: str = "^NSEI,^NSEBANK", current_user: dict = Depends(get_current_user)):
     """
     Get premarket signals for multiple symbols.
     comma-separated symbol list
@@ -2075,7 +2412,7 @@ def get_premarket_signals_batch(symbols: str = "^NSEI,^NSEBANK"):
 
 
 @app.get("/premarket/stocks")
-def get_premarket_stocks_signals():
+def get_premarket_stocks_signals(current_user: dict = Depends(get_current_user)):
     """
     Get premarket signals for all NIFTY 50 stocks.
     Returns list of stocks ranked by signal strength.
@@ -2339,8 +2676,10 @@ def debug_premarket_health():
 @app.get("/next-move")
 def get_next_move():
     """
-    Analyzes last 30 minutes of data to predict NEXT 30 MINUTES direction.
-    CE/PE holding recommendation for each index.
+    NEXT DAY OPENING PREDICTION - End-of-day analysis for overnight positions
+    - Only after 15:20 IST: Analyzes FULL-DAY data
+    - Predicts: Tomorrow's opening direction (CE HOLD vs PE HOLD)
+    - Uses: PCR ratio, closing strength, volume momentum, gap expectations
     """
     import pandas as pd
     from datetime import datetime, timedelta
@@ -2354,9 +2693,20 @@ def get_next_move():
         ist_hour = ist_now.hour
         ist_minute = ist_now.minute
         
-        is_market_hours = (9 <= ist_hour < 15) or (ist_hour == 15 and ist_minute <= 30)
+        # Only show predictions after 15:20 (3:20 PM) - when market is closing
+        is_prediction_time = ist_hour >= 15 and ist_minute >= 20
+        analysis_type = "next_day_prediction" if is_prediction_time else "waiting_for_close"
         
-        logger.info(f"Market hours check: UTC={utc_now.strftime('%H:%M:%S')}, IST={ist_now.strftime('%H:%M:%S')}, Open={is_market_hours}")
+        logger.info(f"Market check: UTC={utc_now.strftime('%H:%M:%S')}, IST={ist_now.strftime('%H:%M:%S')}, PredictionTime={is_prediction_time}")
+        
+        # Early return if market still open
+        if not is_prediction_time:
+            return {
+                "timestamp": datetime.now().isoformat(),
+                "market_status": "🕐 Market Open - Check after 15:20 IST (3:20 PM)",
+                "data": {},
+                "note": "Next day opening predictions available after market close (15:20 IST)"
+            }
         
         # Map indices to their tokens stored in INDEX_TOKENS
         index_mapping = {
@@ -2369,22 +2719,19 @@ def get_next_move():
         
         for index_name, nse_symbol in index_mapping.items():
             signals = {
+                "intraday_range": {"high": 0, "low": 0},
                 "closing_strength": 0,
-                "support_resistance": 0,
-                "sector_sentiment": 0,
-                "volume_trend": 0,
+                "intraday_momentum": 0,
+                "volume_profile": "N/A",
                 "pcr_ratio": "N/A",
-                "overall_probability": 0,
+                "gap_expectation": 0,
+                "next_day_probability": 0,
                 "recommendation": "NEUTRAL",
-                "hold_ce_pe": "NONE",
-                "signals": []
+                "hold_ce_pe": "⚪ WAIT",
+                "signals": [],
+                "analysis_type": "next_day_prediction"
             }
             
-            # If market is closed, show status
-            if not is_market_hours:
-                signals["signals"].append(f"🔴 Market Closed - Next opens at 9:15 AM IST")
-                predictions[index_name] = signals
-                continue
             
             try:
                 # Find token from INDEX_TOKENS (already populated by startup routine)
@@ -2395,144 +2742,137 @@ def get_next_move():
                         break
                 
                 if not token:
-                    logger.error(f"Index token not found for {index_name} ({nse_symbol}). Available: {list(INDEX_TOKENS.keys())}")
+                    logger.error(f"Index token not found for {index_name} ({nse_symbol})")
                     signals["signals"].append(f"❌ Index token not resolved")
                     predictions[index_name] = signals
                     continue
                 
-                logger.info(f"Fetching historical data for {index_name} (token {token}, nse_symbol {nse_symbol})")
+                logger.info(f"Fetching FULL-DAY data for {index_name} (token {token})")
                 
-                # Fetch candles - try minute first, fallback to 5-min, then daily
+                # ========== FETCH FULL DAY CANDLES (9:15 AM - 3:30 PM) ==========
                 to_date = datetime.now()
-                from_date = to_date - timedelta(minutes=30)
+                from_date = to_date.replace(hour=9, minute=15, second=0, microsecond=0)
+                
+                logger.info(f"{index_name}: Fetching full-day candles from {from_date.strftime('%H:%M')} to {to_date.strftime('%H:%M')}")
                 
                 candles = None
-                candle_interval = "minute"
                 
-                # Try minute candles first
+                # Try minute candles for accuracy
                 try:
                     minute_candles = kite.historical_data(token, from_date, to_date, "minute")
-                    if minute_candles and len(minute_candles) >= 3:
+                    if minute_candles and len(minute_candles) >= 10:
                         candles = minute_candles
                         logger.info(f"{index_name}: Got {len(candles)} minute candles")
                 except Exception as e:
                     logger.warning(f"Minute candles failed for {index_name}: {e}")
                 
-                # Fallback to 5-minute candles if minute data not available (day is young)
-                if not candles or len(candles) < 3:
+                # Fallback to 5-minute candles
+                if not candles or len(candles) < 5:
                     try:
                         five_min_candles = kite.historical_data(token, from_date, to_date, "5minute")
-                        if five_min_candles and len(five_min_candles) >= 2:
+                        if five_min_candles and len(five_min_candles) >= 5:
                             candles = five_min_candles
-                            candle_interval = "5minute"
-                            logger.info(f"{index_name}: Fell back to {len(candles)} 5-minute candles")
+                            logger.info(f"{index_name}: Using {len(candles)} 5-minute candles")
                     except Exception as e:
                         logger.warning(f"5-minute candles failed for {index_name}: {e}")
                 
-                # Last resort: daily candles
-                if not candles or len(candles) < 2:
-                    try:
-                        daily_candles = kite.historical_data(token, from_date, to_date, "day")
-                        if daily_candles and len(daily_candles) >= 1:
-                            candles = daily_candles
-                            candle_interval = "day"
-                            logger.info(f"{index_name}: Fell back to {len(candles)} daily candles")
-                    except Exception as e:
-                        logger.warning(f"Daily candles failed for {index_name}: {e}")
-                
-                if not candles or len(candles) < 1:
-                    logger.warning(f"{index_name} has no candles at all")
-                    signals["signals"].append(f"⏳ No market data. Market hours: 9:15 AM - 3:30 PM IST")
+                if not candles or len(candles) < 3:
+                    logger.warning(f"{index_name} has no sufficient candle data")
+                    signals["signals"].append(f"⏳ Insufficient candle data for {index_name}")
                     predictions[index_name] = signals
                     continue
                 
-                signals["signals"].append(f"📊 Using {candle_interval} candles ({len(candles)})")
-                logger.info(f"{index_name}: Using {len(candles)} {candle_interval} candles")
+                logger.info(f"{index_name}: Analyzing {len(candles)} candles for next-day prediction")
                 
-                # ========== SIGNAL 1: CLOSING STRENGTH ==========
-                # How many of the last candles closed in upper half?
-                last_candles = candles[-3:] if len(candles) >= 3 else candles
-                upper_half_count = 0
-                for candle in last_candles:
-                    high_low_range = candle["high"] - candle["low"]
-                    if high_low_range > 0:
-                        close_position = (candle["close"] - candle["low"]) / high_low_range
-                        if close_position > 0.5:
-                            upper_half_count += 1
+                # ========== SIGNAL 1: INTRADAY RANGE & CLOSING POSITION ==========
+                intraday_high = max([c["high"] for c in candles])
+                intraday_low = min([c["low"] for c in candles])
+                open_price = candles[0]["open"]
+                close_price = candles[-1]["close"]
+                intraday_range = intraday_high - intraday_low
                 
-                closing_strength = round((upper_half_count / len(last_candles)) * 100, 1)
-                signals["closing_strength"] = closing_strength
+                signals["intraday_range"] = {"high": round(intraday_high, 2), "low": round(intraday_low, 2)}
                 
-                if closing_strength >= 67:
-                    signals["signals"].append(f"✅ Strong Bullish Closing ({closing_strength}%)")
-                    closing_score = 20
-                elif closing_strength >= 34:
-                    signals["signals"].append(f"➡️ Mixed Closing ({closing_strength}%)")
-                    closing_score = 0
+                # Where did we close in today's range? Top, Middle, or Bottom
+                close_ratio = (close_price - intraday_low) / intraday_range if intraday_range > 0 else 0.5
+                signals["signals"].append(f"📊 Range: {intraday_low:.2f} - {intraday_high:.2f} | Close: {close_price:.2f}")
+                
+                if close_ratio >= 0.75:
+                    signals["signals"].append(f"✅ Closed in TOP 25% of range - Bullish next day")
+                    closing_strength = 100
+                    closing_pushup = 20
+                elif close_ratio >= 0.50:
+                    signals["signals"].append(f"➡️ Closed in upper-middle range - Neutral next day")
+                    closing_strength = 60
+                    closing_pushup = 5
+                elif close_ratio >= 0.25:
+                    signals["signals"].append(f"➡️ Closed in lower-middle range - Neutral next day")
+                    closing_strength = 40
+                    closing_pushup = -5
                 else:
-                    signals["signals"].append(f"❌ Strong Bearish Closing ({closing_strength}%)")
-                    closing_score = -20
+                    signals["signals"].append(f"❌ Closed in BOTTOM 25% of range - Bearish next day")
+                    closing_strength = 0
+                    closing_pushup = -20
                 
-                # ========== SIGNAL 2: SUPPORT/RESISTANCE LEVELS ==========
-                recent_highs = [c["high"] for c in candles[-10:]] if len(candles) >= 10 else [c["high"] for c in candles]
-                recent_lows = [c["low"] for c in candles[-10:]] if len(candles) >= 10 else [c["low"] for c in candles]
+                signals["closing_strength"] = round(close_ratio * 100, 1)
                 
-                resistance = max(recent_highs)
-                support = min(recent_lows)
-                current_price = candles[-1]["close"]
+                # ========== SIGNAL 2: INTRADAY MOMENTUM (Open to Close trend) ==========
+                price_move = close_price - open_price
+                momentum_pct = (price_move / open_price * 100) if open_price > 0 else 0
+                signals["intraday_momentum"] = round(momentum_pct, 2)
                 
-                sr_distance = abs(current_price - support) + abs(current_price - resistance)
-                
-                signals["support_resistance"] = round(sr_distance, 2)
-                
-                # Check if price is near breakout/breakdown
-                resistance_ratio = (current_price - support) / (resistance - support) if (resistance - support) > 0 else 0.5
-                
-                if resistance_ratio > 0.75:
-                    signals["signals"].append(f"⬆️ Near Resistance ({resistance:.2f}) - Downside Risk")
-                    sr_score = -15
-                elif resistance_ratio < 0.25:
-                    signals["signals"].append(f"⬇️ Near Support ({support:.2f}) - Upside Potential")
-                    sr_score = 15
+                if momentum_pct > 0.5:
+                    signals["signals"].append(f"📈 Day ended BULLISH: +{momentum_pct:.2f}% (Open→Close)")
+                    momentum_score = 15
+                elif momentum_pct < -0.5:
+                    signals["signals"].append(f"📉 Day ended BEARISH: {momentum_pct:.2f}% (Open→Close)")
+                    momentum_score = -15
                 else:
-                    signals["signals"].append(f"➡️ Between S/R - Neutral Zone")
-                    sr_score = 0
+                    signals["signals"].append(f"➡️ Day NEUTRAL: {momentum_pct:+.2f}%")
+                    momentum_score = 0
                 
-                # ========== SIGNAL 3: VOLUME TREND ==========
-                recent_volumes = [c["volume"] for c in candles[-5:]] if len(candles) >= 5 else [c["volume"] for c in candles]
-                avg_volume = sum(recent_volumes) / len(recent_volumes)
-                current_volume = candles[-1]["volume"]
+                # ========== SIGNAL 3: CLOSING VOLUME & VOLUME PROFILE ==========
+                closing_candles = candles[-5:] if len(candles) >= 5 else candles
+                day_volumes = [c["volume"] for c in candles]
+                avg_volume = sum(day_volumes) / len(day_volumes) if day_volumes else 1
+                closing_volume = candles[-1]["volume"]
+                morning_volume = sum([c["volume"] for c in candles[:10]]) / min(10, len(candles))
                 
-                volume_change = ((current_volume - avg_volume) / avg_volume * 100) if avg_volume > 0 else 0
-                signals["volume_trend"] = round(volume_change, 1)
+                volume_ratio = (closing_volume / avg_volume) if avg_volume > 0 else 1
+                signals["signals"].append(f"📊 Closing Volume: {volume_ratio:.2f}x avg | Total: {sum(day_volumes)/10**6:.1f}M")
                 
-                if current_volume > avg_volume * 1.2:
-                    signals["signals"].append(f"📈 Volume UP ({volume_change:.1f}%) - Bullish Confirmation")
+                if closing_volume > avg_volume * 1.3:
+                    signals["volume_profile"] = "🚀 HIGH (Strong move confirmation)"
                     volume_score = 10
-                elif current_volume < avg_volume * 0.8:
-                    signals["signals"].append(f"📉 Volume DOWN ({volume_change:.1f}%) - Weak Move")
+                elif closing_volume < avg_volume * 0.7:
+                    signals["volume_profile"] = "🟡 LOW (Weak/indecisive)"
                     volume_score = -10
                 else:
-                    signals["signals"].append(f"➡️ Volume Normal ({volume_change:.1f}%)")
+                    signals["volume_profile"] = "➡️ NORMAL"
                     volume_score = 0
                 
-                # ========== SIGNAL 4: SECTOR SENTIMENT (simplified) ==========
-                # Use price momentum over last few candles
-                if len(candles) >= 3:
-                    price_change = ((candles[-1]["close"] - candles[-3]["close"]) / candles[-3]["close"] * 100) if candles[-3]["close"] > 0 else 0
-                    signals["signals"].append(f"📊 Price Momentum: {price_change:+.2f}%")
-                    sector_score = 15 if price_change > 0.5 else (-15 if price_change < -0.5 else 0)
+                # ========== SIGNAL 4: END-OF-DAY CANDLE QUALITY ==========
+                last_candle = candles[-1]
+                last_body = abs(last_candle["close"] - last_candle["open"])
+                last_full_range = last_candle["high"] - last_candle["low"]
+                wick_ratio = last_body / last_full_range if last_full_range > 0 else 0
+                
+                if wick_ratio > 0.7 and last_candle["close"] > last_candle["open"]:
+                    signals["signals"].append(f"🟢 Bullish Closing Candle (strong body, small wicks)")
+                    candle_quality = 15
+                elif wick_ratio > 0.7 and last_candle["close"] < last_candle["open"]:
+                    signals["signals"].append(f"🔴 Bearish Closing Candle (strong body, small wicks)")
+                    candle_quality = -15
+                elif wick_ratio < 0.3:
+                    signals["signals"].append(f"⚠️ DOJI/Indecision Candle (may reverse next day)")
+                    candle_quality = 5  # Slight reversal bias
                 else:
-                    price_change = 0
-                    sector_score = 0
+                    signals["signals"].append(f"➡️ Normal Closing Candle")
+                    candle_quality = 0
                 
-                signals["sector_sentiment"] = round(price_change, 2)
-                
-                # ========== SIGNAL 5: PCR RATIO (Put/Call) ==========
+                # ========== SIGNAL 5: PCR RATIO (Put/Call at close) ==========
+                pcr_score = 0
                 try:
-                    current_price = candles[-1]["close"]
-                    cfg = SYMBOL_CONFIG.get(index_name, SYMBOL_CONFIG["NIFTY"])
-                    
                     if index_name in _dashboard_options:
                         option_data = _dashboard_options[index_name]
                         if "CE" in option_data and "PE" in option_data:
@@ -2541,51 +2881,65 @@ def get_next_move():
                             
                             if ce_oi > 0 and pe_oi > 0:
                                 pcr = pe_oi / ce_oi
-                                signals["pcr_ratio"] = round(pcr, 2)
+                                signals["pcr_ratio"] = round(pcr, 3)
                                 
-                                if pcr > 1.2:
-                                    signals["signals"].append(f"🔄 PCR {pcr:.2f} - Bearish (more puts)")
+                                # PCR interpretation for NEXT DAY
+                                if pcr > 1.5:
+                                    signals["signals"].append(f"🔄 PCR {pcr:.2f} - HIGH (More puts, bearish bias)")
+                                    pcr_score = -20  # Stronger bearish signal
+                                elif pcr > 1.2:
+                                    signals["signals"].append(f"🔄 PCR {pcr:.2f} - ELEVATED (Puts > Calls)")
                                     pcr_score = -10
+                                elif pcr < 0.65:
+                                    signals["signals"].append(f"🔄 PCR {pcr:.2f} - LOW (More calls, bullish bias)")
+                                    pcr_score = 20  # Stronger bullish signal
                                 elif pcr < 0.8:
-                                    signals["signals"].append(f"🔄 PCR {pcr:.2f} - Bullish (more calls)")
+                                    signals["signals"].append(f"🔄 PCR {pcr:.2f} - REDUCED (Calls > Puts)")
                                     pcr_score = 10
                                 else:
-                                    signals["signals"].append(f"🔄 PCR {pcr:.2f} - Balanced")
+                                    signals["signals"].append(f"🔄 PCR {pcr:.2f} - BALANCED (Neutral)")
                                     pcr_score = 0
                             else:
-                                pcr_score = 0
-                        else:
-                            pcr_score = 0
-                    else:
-                        pcr_score = 0
+                                signals["signals"].append(f"📊 PCR: Insufficient OI data")
                 except Exception as e:
                     logger.debug(f"PCR calculation skipped: {e}")
-                    pcr_score = 0
                 
-                # ========== FINAL RECOMMENDATION ==========
-                total_score = closing_score + sr_score + volume_score + sector_score + pcr_score
+                # ========== FINAL NEXT-DAY PREDICTION ==========
+                total_score = closing_pushup + momentum_score + volume_score + candle_quality + pcr_score
                 
-                # Map score to probability (50-75%)
-                probability = 62.5 + (total_score / 100) * 12.5
-                probability = max(50, min(75, probability))
-                signals["overall_probability"] = round(probability, 1)
+                # Map score to next-day probability (50-90%)
+                probability = 70 + (total_score / 100) * 15
+                probability = max(50, min(90, probability))
+                signals["next_day_probability"] = round(probability, 1)
                 
-                # CE/PE recommendation
-                if probability >= 68:
-                    if total_score > 0:
-                        signals["hold_ce_pe"] = "🟢 HOLD CE (Bullish)"
-                        signals["recommendation"] = "BULLISH"
-                    else:
-                        signals["hold_ce_pe"] = "🔴 HOLD PE (Bearish)"
-                        signals["recommendation"] = "BEARISH"
-                elif probability >= 62:
-                    signals["hold_ce_pe"] = "🟡 WATCH (Mixed)"
-                    signals["recommendation"] = "NEUTRAL"
+                # Gap expectations
+                gap_expected = abs(momentum_pct) > 0.3  # If big move today, likely gap next day
+                if gap_expected:
+                    signals["gap_expectation"] = round(momentum_pct * 1.5, 2)  # Expect 1.5x gap
+                    signals["signals"].append(f"🔁 GAP EXPECTED: {signals['gap_expectation']:+.2f}% (momentum continuation)")
                 else:
-                    signals["hold_ce_pe"] = "⚪ NO POSITION"
+                    signals["signals"].append(f"No significant gap expected")
+                
+                # CE/PE recommendation for next day
+                if probability >= 75:
+                    if total_score > 10:
+                        signals["hold_ce_pe"] = "🟢 STRONG CE HOLD (Bullish next day)"
+                        signals["recommendation"] = "BUY_CE"
+                    else:
+                        signals["hold_ce_pe"] = "🔴 STRONG PE HOLD (Bearish next day)"
+                        signals["recommendation"] = "BUY_PE"
+                elif probability >= 65:
+                    if total_score >= 0:
+                        signals["hold_ce_pe"] = "🟡 WEAK CE HOLD (Slightly bullish)"
+                        signals["recommendation"] = "SLIGHTLY_BULLISH"
+                    else:
+                        signals["hold_ce_pe"] = "🟡 WEAK PE HOLD (Slightly bearish)"
+                        signals["recommendation"] = "SLIGHTLY_BEARISH"
+                else:
+                    signals["hold_ce_pe"] = "⚪ NEUTRAL (Wait for morning)"
                     signals["recommendation"] = "NEUTRAL"
                 
-                logger.info(f"{index_name}: {signals['recommendation']} | Prob: {probability}% | Score: {total_score}")
+                logger.info(f"{index_name}: Next-day {signals['recommendation']} | Prob: {probability}% | Score: {total_score}")
                 predictions[index_name] = signals
                 
             except Exception as e:
@@ -2595,9 +2949,17 @@ def get_next_move():
         
         return {
             "timestamp": datetime.now().isoformat(),
+            "market_status": "🌙 Market CLOSED - End-of-Day Analysis Complete",
             "data": predictions,
-            "market_hours": "9:15 AM - 3:30 PM IST",
-            "note": "Next 30 min prediction based on last 30 min data. Updated every minute."
+            "prediction_note": "📊 NEXT DAY OPENING PREDICTION | Analysis @ 15:20 IST",
+            "methodology": {
+                "closing_position": "Where index closed in today's range (top = bullish)",
+                "intraday_momentum": "Overall direction from market open to close",
+                "volume_profile": "Closing volume vs daily average (high = confirmation)",
+                "candle_quality": "Last candle body/wick ratio (strong = conviction)",
+                "pcr_ratio": "Put/Call ratio at close (>1.5 = bearish, <0.65 = bullish)"
+            },
+            "recommendation_note": "🟡 Probabilities: STRONG (75%+) | WEAK (65-74%) | NEUTRAL (<65%)"
         }
         
     except Exception as e:
@@ -2605,8 +2967,4 @@ def get_next_move():
         return {
             "error": str(e),
             "timestamp": datetime.now().isoformat()
-        }
-        return {
-            "status": "error",
-            "message": str(e)
         }

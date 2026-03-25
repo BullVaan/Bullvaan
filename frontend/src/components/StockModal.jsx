@@ -6,6 +6,7 @@ import {
   LineSeries,
   HistogramSeries
 } from 'lightweight-charts';
+import { getAuthHeaders } from '../utils/auth';
 
 export default function StockModal({ stock, onClose }) {
   const chartContainerRef = useRef(null);
@@ -90,7 +91,9 @@ export default function StockModal({ stock, onClose }) {
     });
 
     /* Fetch candle data */
-    fetch(`/candles?symbol=${stock.symbol}&interval=${tf}`)
+    fetch(`/candles?symbol=${stock.symbol}&interval=${tf}`, {
+      headers: getAuthHeaders()
+    })
       .then((res) => res.json())
       .then((rawData) => {
         // Filter out invalid data items
