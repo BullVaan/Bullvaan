@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { getAuthHeaders } from '../utils/auth';
+import { getAuthHeaders } from '../../utils/auth';
 
 const BACKEND_URL = 'http://localhost:8000';
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, LogOut, Bell, Lock, Sliders, Palette, Key } from 'lucide-react';
+import { Save, LogOut } from 'lucide-react';
 import { getAuthHeaders } from '../utils/auth';
 
 export default function Settings() {
@@ -53,17 +53,6 @@ export default function Settings() {
     chartType: localStorage.getItem('chart_type') || 'candlestick',
     defaultTimeframe: localStorage.getItem('default_tf') || '5m',
     decimalPlaces: localStorage.getItem('decimal_places') || '2'
-  });
-
-  // API Settings State
-  const [api, setApi] = useState({
-    apiKey: localStorage.getItem('api_key')
-      ? '••••••••' + localStorage.getItem('api_key')?.slice(-4)
-      : 'Not configured',
-    apiSecret: localStorage.getItem('api_secret')
-      ? '••••••••'
-      : 'Not configured',
-    syncFrequency: localStorage.getItem('sync_frequency') || '10'
   });
 
   const handleAccountChange = (field, value) => {

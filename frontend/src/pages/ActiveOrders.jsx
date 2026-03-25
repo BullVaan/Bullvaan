@@ -1,8 +1,8 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 import { getAuthHeaders } from '../utils/auth';
 
-const API = '';
+const API = 'http://localhost:8000';
 
 export default function ActiveOrders() {
   const [activeTrades, setActiveTrades] = useState([]);
@@ -22,45 +22,46 @@ export default function ActiveOrders() {
     const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
     const todayStr = ist.toISOString().slice(0, 10);
     setSelectedDate(todayStr);
-    setDisplayDate(todayStr);
   }, []);
 
   // Fetch trades for selected date
-  const fetchActiveTrades = async (dateStr = selectedDate) => {
-    try {
-      setLoading(true);
-      const url = dateStr
-        ? `${API}/trades/active?date=${dateStr}`
-        : `${API}/trades/active`;
-      const res = await fetch(url, { headers: getAuthHeaders() });
-      const data = await res.json();
-      const trades = data.trades || [];
-      setActiveTrades(trades);
-      setDisplayDate(data.date);
-      setPnlByMode(data.pnl_by_mode || { real: 0, paper: 0 });
+  const fetchActiveTrades = useCallback(
+    async (dateStr = selectedDate) => {
+      try {
+        setLoading(true);
+        const url = dateStr
+          ? `${API}/trades/active?date=${dateStr}`
+          : `${API}/trades/active`;
+        const res = await fetch(url, { headers: getAuthHeaders() });
+        const data = await res.json();
+        const trades = data.trades || [];
+        setActiveTrades(trades);
+        setDisplayDate(data.date);
+        setPnlByMode(data.pnl_by_mode || { real: 0, paper: 0 });
 
-      const realCount = trades.filter(
-        (t) => (t.mode || 'paper') === 'real'
-      ).length;
-      const paperCount = trades.filter(
-        (t) => (t.mode || 'paper') === 'paper'
-      ).length;
+        setSelectedTab((prev) => {
+          const realCount = trades.filter(
+            (t) => (t.mode || 'paper') === 'real'
+          ).length;
+          const paperCount = trades.filter(
+            (t) => (t.mode || 'paper') === 'paper'
+          ).length;
+          if (prev === 'real' && realCount === 0 && paperCount > 0)
+            return 'paper';
+          if (prev === 'paper' && paperCount === 0 && realCount > 0)
+            return 'real';
+          return prev;
+        });
 
-      setSelectedTab((prev) => {
-        if (prev === 'real' && realCount === 0 && paperCount > 0)
-          return 'paper';
-        if (prev === 'paper' && paperCount === 0 && realCount > 0)
-          return 'real';
-        return prev;
-      });
-
-      setError('');
-    } catch (err) {
-      setError(`Failed to fetch trades: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+        setError('');
+      } catch (err) {
+        setError(`Failed to fetch trades: ${err.message}`);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [selectedDate]
+  );
 
   // Sell an open trade at current LTP
   const sellTrade = async (trade) => {
@@ -93,7 +94,7 @@ export default function ActiveOrders() {
     if (selectedDate) {
       fetchActiveTrades(selectedDate);
     }
-  }, [selectedDate]);
+  }, [selectedDate, fetchActiveTrades]);
 
   // Handle date change
   const handleDateChange = (e) => {

@@ -8,7 +8,7 @@ import Trades from './pages/Trades';
 import ActiveOrders from './pages/ActiveOrders';
 import History from './pages/History';
 import Settings from './pages/Settings';
-import ProtectedRoute from './components/ProtectedRoute';
+import ProtectedRoute from './layout/ProtectedRoute';
 import CandlesCharts from './pages/CandlesCharts';
 
 function App() {

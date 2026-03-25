@@ -6,7 +6,7 @@ import {
   LineSeries,
   HistogramSeries
 } from 'lightweight-charts';
-import { getAuthHeaders } from '../utils/auth';
+import { getAuthHeaders } from '../../utils/auth';
 
 export default function StockModal({ stock, onClose }) {
   const chartContainerRef = useRef(null);

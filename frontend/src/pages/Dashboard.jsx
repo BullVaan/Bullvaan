@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import RoleCard from '../components/RoleCard';
-import OptionSuggestion from '../components/OptionSuggestion';
-import MarketTicker from '../components/MarketTicker';
-import MarketStatus from '../components/MarketStatus';
+import RoleCard from '../components/common/RoleCard';
+import OptionSuggestion from '../components/dashboard/OptionSuggestion';
+import MarketTicker from '../components/dashboard/MarketTicker';
+import MarketStatus from '../components/dashboard/MarketStatus';
 import { getAuthHeaders } from '../utils/auth';
 
 const BACKEND_URL = 'http://localhost:8000';
