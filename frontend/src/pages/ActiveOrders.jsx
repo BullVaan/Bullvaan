@@ -11,7 +11,7 @@ export default function ActiveOrders() {
   const [liveLtp, setLiveLtp] = useState({});
   const [selectedTab, setSelectedTab] = useState('paper');
   const [selectedDate, setSelectedDate] = useState('');
-  const [displayDate, setDisplayDate] = useState('');
+  const [, setDisplayDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [sellingId, setSellingId] = useState(null);
@@ -171,13 +171,6 @@ export default function ActiveOrders() {
   const filteredTrades = activeTrades.filter(
     (t) => (t.mode || 'paper') === selectedTab
   );
-
-  const realCount = activeTrades.filter(
-    (t) => (t.mode || 'paper') === 'real'
-  ).length;
-  const paperCount = activeTrades.filter(
-    (t) => (t.mode || 'paper') === 'paper'
-  ).length;
 
   // Calculate live total P&L for selected tab
   const calculateTotalPnl = () => {
