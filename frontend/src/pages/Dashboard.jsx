@@ -5,8 +5,9 @@ import OptionSuggestion from '../components/dashboard/OptionSuggestion';
 import MarketTicker from '../components/dashboard/MarketTicker';
 import MarketStatus from '../components/dashboard/MarketStatus';
 import { getAuthHeaders } from '../utils/auth';
+import { API_BASE_URL } from '../utils/api';
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = API_BASE_URL;
 
 function Dashboard() {
   const navigate = useNavigate();

@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getAuthHeaders } from '../../utils/auth';
+import { API_BASE_URL, getWsUrl } from '../../utils/api';
 
-const API = 'http://localhost:8000';
+const API = API_BASE_URL;
 
 export default function OptionSuggestion({
   signal,
@@ -113,11 +114,7 @@ export default function OptionSuggestion({
   useEffect(() => {
     let reconnectTimer;
     const connect = () => {
-      const wsHost =
-        window.location.port === '3000'
-          ? `${window.location.hostname}:8000`
-          : window.location.host;
-      const ws = new WebSocket(`ws://${wsHost}/ws/options`);
+      const ws = new WebSocket(getWsUrl('/ws/options'));
       wsRef.current = ws;
       ws.onopen = () => {
         ws.send(JSON.stringify({ symbol }));

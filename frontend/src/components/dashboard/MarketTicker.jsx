@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { getWsUrl } from '../../utils/api';
 
 function MarketTicker() {
   const [ticker, setTicker] = useState([]);
@@ -12,11 +13,7 @@ function MarketTicker() {
       wsRef.current.close();
     }
 
-    const wsHost =
-      window.location.port === '3000'
-        ? `${window.location.hostname}:8000`
-        : window.location.host;
-    const ws = new WebSocket(`ws://${wsHost}/ws/ticker`);
+    const ws = new WebSocket(getWsUrl('/ws/ticker'));
     wsRef.current = ws;
 
     ws.onopen = () => setConnected(true);

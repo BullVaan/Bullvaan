@@ -1,8 +1,9 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 import { getAuthHeaders } from '../utils/auth';
+import { API_BASE_URL, getWsUrl } from '../utils/api';
 
-const API = 'http://localhost:8000';
+const API = API_BASE_URL;
 
 export default function ActiveOrders() {
   const [activeTrades, setActiveTrades] = useState([]);
@@ -128,11 +129,7 @@ export default function ActiveOrders() {
     }
 
     const connect = () => {
-      const wsHost =
-        window.location.port === '3000'
-          ? `${window.location.hostname}:8000`
-          : window.location.host;
-      const ws = new WebSocket(`ws://${wsHost}/ws/trades`);
+      const ws = new WebSocket(getWsUrl('/ws/trades'));
       wsRef.current = ws;
 
       ws.onmessage = (e) => {

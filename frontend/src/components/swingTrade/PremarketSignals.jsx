@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { getAuthHeaders } from '../../utils/auth';
+import { API_BASE_URL } from '../../utils/api';
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = API_BASE_URL;
 
 // NSE holidays and non-trading days
 const MARKET_HOLIDAYS = {

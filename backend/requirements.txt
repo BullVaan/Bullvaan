@@ -5,7 +5,7 @@
 # Web Framework & Server
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-websockets==16.0
+websockets>=10.4
 
 # Data Processing
 pandas==2.3.3
@@ -16,3 +16,10 @@ python-dotenv==1.2.1
 
 # Zerodha Kite Connect (for live data & trading)
 kiteconnect>=5.0.0
+
+# Supabase (database client)
+supabase>=2.0.0
+
+# Authentication
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4

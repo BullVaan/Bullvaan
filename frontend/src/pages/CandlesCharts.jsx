@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { FaArrowUp } from 'react-icons/fa';
 import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import { getAuthHeaders } from '../utils/auth';
+import { API_BASE_URL } from '../utils/api';
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = API_BASE_URL;
 const indexSymbolList = ['NIFTY', 'BANKNIFTY', 'SENSEX'];
 const intervalOptions = [
   { label: '1 min', value: '1m' },
