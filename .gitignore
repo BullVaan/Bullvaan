@@ -41,6 +41,8 @@ logs/
 # Local env / secrets (keep out of git)
 .env
 .env.*
+# Allow example/template files
+!.env.example
 *.pem
 *.key
 node_modules
