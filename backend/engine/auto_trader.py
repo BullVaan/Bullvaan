@@ -764,7 +764,7 @@ class AutoTrader:
                     continue
 
                 # Execute!
-                self._execute_buy(prefix, option_name, atm_price, lots, lot_size, strength, rule)
+                self._execute_buy(prefix, option_name, atm_price, lots, lot_size, strength, rule, sig=sig)
 
     def _get_trade_ltp(self, trade):
         """Get live LTP for an open trade's specific instrument"""
