@@ -3,8 +3,8 @@ name: Refresh Zerodha Access Token
 on:
   schedule:
     # Runs at 00:35 UTC = 06:05 AM IST daily (just after 6 AM token expiry)
-    - cron: '35 0 * * *'
-  workflow_dispatch:  # Allow manual trigger from GitHub Actions tab
+    - cron: "35 0 * * *"
+  workflow_dispatch: # Allow manual trigger from GitHub Actions tab
 
 jobs:
   refresh-token:
@@ -17,7 +17,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
@@ -27,11 +27,11 @@ jobs:
 
       - name: Run token refresh script
         env:
-          ZERODHA_USER_ID:     ${{ secrets.ZERODHA_USER_ID }}
-          ZERODHA_PASSWORD:    ${{ secrets.ZERODHA_PASSWORD }}
+          ZERODHA_USER_ID: ${{ secrets.ZERODHA_USER_ID }}
+          ZERODHA_PASSWORD: ${{ secrets.ZERODHA_PASSWORD }}
           ZERODHA_TOTP_SECRET: ${{ secrets.ZERODHA_TOTP_SECRET }}
-          API_KEY:             ${{ secrets.API_KEY }}
-          API_SECRET:          ${{ secrets.API_SECRET }}
-          RENDER_API_KEY:      ${{ secrets.RENDER_API_KEY }}
-          RENDER_SERVICE_ID:   ${{ secrets.RENDER_SERVICE_ID }}
+          API_KEY: ${{ secrets.API_KEY }}
+          API_SECRET: ${{ secrets.API_SECRET }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: python backend/utils/auto_refresh_token.py
