@@ -2617,1445 +2617,201 @@
   },
   {
     "id": 1773231623358,
-    "name": "NIFTY 23700 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 233.85,
-    "sell_price": 228.95,
-    "pnl": -1592.5,
+    "name": "NIFTY 23200 CE",
+    "lot": 1,
+    "quantity": 65,
+    "buy_price": 173.95,
+    "sell_price": 173.95,
+    "pnl": 0.0,
     "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "12:38",
-    "sell_time": "12:48",
+    "date": "2026-03-16",
+    "buy_time": "12:02",
+    "sell_time": "13:10",
     "auto": true,
     "signal_strength": "MEDIUM",
     "target_pts": 12,
-    "sl_pts": 10,
+    "sl_pts": 20,
+    "mode": "real",
+    "order_id": "2033431098100736000",
+    "kite_tradingsymbol": "NIFTY2631723200CE",
     "exit_reason": "SIGNAL_NEUTRAL"
   },
   {
     "id": 1773231623359,
-    "name": "SENSEX 76400 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 193.35,
-    "sell_price": 205.95,
-    "pnl": 1260.0,
+    "name": "NIFTY 23150 CE",
+    "lot": 1,
+    "quantity": 65,
+    "buy_price": 190.3,
+    "sell_price": 204.65,
+    "pnl": 932.75,
     "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "12:38",
-    "sell_time": "12:38",
+    "date": "2026-03-16",
+    "buy_time": "12:16",
+    "sell_time": "12:24",
     "auto": true,
     "signal_strength": "MEDIUM",
     "target_pts": 12,
-    "sl_pts": 10,
+    "sl_pts": 20,
+    "mode": "real",
+    "order_id": "2033434683978997760",
+    "kite_tradingsymbol": "NIFTY2631723150CE",
     "exit_reason": "TARGET_HIT"
   },
   {
     "id": 1773231623360,
-    "name": "SENSEX 76300 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 161.7,
-    "sell_price": 147.55,
-    "pnl": -1415.0,
+    "name": "NIFTY 23150 CE",
+    "lot": 1,
+    "quantity": 65,
+    "buy_price": 193.55,
+    "sell_price": 173.15,
+    "pnl": -1326.0,
     "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "12:41",
-    "sell_time": "12:41",
+    "date": "2026-03-16",
+    "buy_time": "12:31",
+    "sell_time": "12:35",
     "auto": true,
     "signal_strength": "MEDIUM",
     "target_pts": 12,
-    "sl_pts": 10,
+    "sl_pts": 20,
+    "mode": "real",
+    "order_id": "2033438491438145536",
+    "kite_tradingsymbol": "NIFTY2631723150CE",
     "exit_reason": "STOP_LOSS"
   },
   {
     "id": 1773231623361,
-    "name": "SENSEX 76400 PE",
+    "name": "SENSEX 74400 PE",
     "lot": 5,
     "quantity": 100,
-    "buy_price": 174.35,
-    "sell_price": 164.35,
-    "pnl": -1000.0,
+    "buy_price": 810.65,
+    "sell_price": 798.75,
+    "pnl": -1190.0,
     "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "12:47",
-    "sell_time": "12:47",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623362,
-    "name": "BANKNIFTY 55200 PE",
-    "lot": 3,
-    "quantity": 90,
-    "buy_price": 1046.65,
-    "sell_price": 1049.6,
-    "pnl": 265.5,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "12:48",
-    "sell_time": "12:48",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "SIGNAL_NEUTRAL"
-  },
-  {
-    "id": 1773231623363,
-    "name": "NIFTY 23700 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 236.7,
-    "sell_price": 226.05,
-    "pnl": -3461.25,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "12:53",
-    "sell_time": "12:58",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623364,
-    "name": "SENSEX 76300 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 155.55,
-    "sell_price": 145.45,
-    "pnl": -1010.0,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "12:53",
-    "sell_time": "12:53",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623365,
-    "name": "NIFTY 23650 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 232.1,
-    "sell_price": 222.0,
-    "pnl": -3282.5,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "13:07",
-    "sell_time": "13:09",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623366,
-    "name": "SENSEX 76200 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 171.8,
-    "sell_price": 160.6,
-    "pnl": -1120.0,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "13:07",
+    "date": "2026-03-16",
+    "buy_time": "12:51",
     "sell_time": "13:07",
     "auto": true,
     "signal_strength": "MEDIUM",
     "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623367,
-    "name": "BANKNIFTY 55100 PE",
-    "lot": 3,
-    "quantity": 90,
-    "buy_price": 1061.05,
-    "sell_price": 1050.5,
-    "pnl": -949.5,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "13:09",
-    "sell_time": "13:09",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623368,
-    "name": "NIFTY 23700 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 237.5,
-    "sell_price": 227.25,
-    "pnl": -3331.25,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "13:11",
-    "sell_time": "13:14",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623369,
-    "name": "SENSEX 76300 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 179.35,
-    "sell_price": 168.0,
-    "pnl": -1135.0,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "13:11",
-    "sell_time": "13:11",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623370,
-    "name": "BANKNIFTY 55200 PE",
-    "lot": 3,
-    "quantity": 90,
-    "buy_price": 1055.1,
-    "sell_price": 1056.95,
-    "pnl": 166.5,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "13:14",
-    "sell_time": "13:16",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "SIGNAL_NEUTRAL"
-  },
-  {
-    "id": 1773231623371,
-    "name": "NIFTY 23700 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 231.95,
-    "sell_price": 228.7,
-    "pnl": -1056.25,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "13:21",
-    "sell_time": "13:22",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "KILL_SWITCH"
-  },
-  {
-    "id": 1773231623372,
-    "name": "SENSEX 76300 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 161.0,
-    "sell_price": 145.45,
-    "pnl": -1555.0,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "13:21",
-    "sell_time": "13:22",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623373,
-    "name": "SENSEX 76400 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 107.5,
-    "sell_price": 124.05,
-    "pnl": 1655.0,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "14:02",
-    "sell_time": "14:02",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
+    "sl_pts": 20,
+    "mode": "paper",
     "exit_reason": "TARGET_HIT"
   },
   {
-    "id": 1773231623374,
-    "name": "SENSEX 76400 PE",
+    "id": 1773231623362,
+    "name": "SENSEX 74500 PE",
     "lot": 5,
     "quantity": 100,
-    "buy_price": 109.25,
-    "sell_price": 93.85,
-    "pnl": -1540.0,
+    "buy_price": 810.0,
+    "sell_price": 824.45,
+    "pnl": 1445.0,
     "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "14:05",
-    "sell_time": "14:05",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623375,
-    "name": "SENSEX 76400 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 101.2,
-    "sell_price": 113.45,
-    "pnl": 1225.0,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "14:27",
-    "sell_time": "14:27",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "TARGET_HIT"
-  },
-  {
-    "id": 1773231623376,
-    "name": "SENSEX 76300 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 97.2,
-    "sell_price": 74.25,
-    "pnl": -2295.0,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "14:30",
-    "sell_time": "14:31",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623377,
-    "name": "NIFTY 23700 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 222.6,
-    "sell_price": 212.1,
-    "pnl": -3412.5,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "14:32",
-    "sell_time": "14:33",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623378,
-    "name": "SENSEX 76400 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 108.5,
-    "sell_price": 97.7,
-    "pnl": -1080.0,
-    "status": "closed",
-    "date": "2026-03-12",
-    "buy_time": "14:36",
-    "sell_time": "14:36",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623379,
-    "name": "BANKNIFTY 53800 PE",
-    "lot": 2,
-    "quantity": 60,
-    "buy_price": 1147.25,
-    "sell_price": 1160.75,
-    "pnl": 810.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "12:37",
-    "sell_time": "12:38",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "TARGET_HIT"
-  },
-  {
-    "id": 1773231623380,
-    "name": "BANKNIFTY 53800 PE",
-    "lot": 2,
-    "quantity": 60,
-    "buy_price": 1188.85,
-    "sell_price": 1204.6,
-    "pnl": 945.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "12:41",
-    "sell_time": "12:41",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "exit_reason": "TARGET_HIT"
-  },
-  {
-    "id": 1773231623381,
-    "name": "SENSEX 74800 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 979.85,
-    "sell_price": 965.65,
-    "pnl": -1420.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "12:49",
-    "sell_time": "12:49",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.24,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "BUY"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623382,
-    "name": "NIFTY 23200 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 243.1,
-    "sell_price": 232.9,
-    "pnl": -3315.0,
-    "status": "closed",
-    "date": "2026-03-13",
+    "date": "2026-03-16",
     "buy_time": "12:54",
     "sell_time": "12:55",
     "auto": true,
     "signal_strength": "MEDIUM",
     "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.35,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "BUY"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623383,
-    "name": "SENSEX 74800 PE",
-    "lot": 1,
-    "quantity": 20,
-    "buy_price": 994.95,
-    "sell_price": 984.35,
-    "pnl": -212.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "12:54",
-    "sell_time": "12:54",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.35,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "BUY"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623384,
-    "name": "NIFTY 23200 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 240.65,
-    "sell_price": 238.3,
-    "pnl": -763.75,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:04",
-    "sell_time": "13:04",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.29,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "BUY"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "KILL_SWITCH"
-  },
-  {
-    "id": 1773231623385,
-    "name": "SENSEX 74800 PE",
-    "lot": 1,
-    "quantity": 20,
-    "buy_price": 1000.1,
-    "sell_price": 990.0,
-    "pnl": -202.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:04",
-    "sell_time": "13:04",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.28,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "BUY"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623386,
-    "name": "NIFTY 23200 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 240.55,
-    "sell_price": 253.6,
-    "pnl": 4241.25,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:08",
-    "sell_time": "13:09",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.19,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
+    "sl_pts": 20,
+    "mode": "paper",
     "exit_reason": "TARGET_HIT"
   },
   {
-    "id": 1773231623387,
-    "name": "SENSEX 74800 PE",
-    "lot": 1,
-    "quantity": 20,
-    "buy_price": 999.0,
-    "sell_price": 1013.0,
-    "pnl": 280.0,
+    "id": 1773231623363,
+    "name": "SENSEX 74500 PE",
+    "lot": 5,
+    "quantity": 100,
+    "buy_price": 846.6,
+    "sell_price": 834.25,
+    "pnl": -1235.0,
     "status": "closed",
-    "date": "2026-03-13",
+    "date": "2026-03-16",
+    "buy_time": "13:05",
+    "sell_time": "13:06",
+    "auto": true,
+    "signal_strength": "MEDIUM",
+    "target_pts": 12,
+    "sl_pts": 20,
+    "mode": "paper",
+    "exit_reason": "MANUAL_STOP"
+  },
+  {
+    "id": 1773231623364,
+    "name": "SENSEX 74500 PE",
+    "lot": 5,
+    "quantity": 100,
+    "buy_price": 840.6,
+    "sell_price": 838.85,
+    "pnl": -175.0,
+    "status": "closed",
+    "date": "2026-03-16",
+    "buy_time": "13:07",
+    "sell_time": "13:08",
+    "auto": true,
+    "signal_strength": "MEDIUM",
+    "target_pts": 12,
+    "sl_pts": 20,
+    "mode": "paper"
+  },
+  {
+    "id": 1773231623365,
+    "name": "SENSEX 74500 PE",
+    "lot": 5,
+    "quantity": 100,
+    "buy_price": 838.85,
+    "sell_price": 811.95,
+    "pnl": -2690.0,
+    "status": "closed",
+    "date": "2026-03-16",
     "buy_time": "13:08",
     "sell_time": "13:08",
     "auto": true,
     "signal_strength": "MEDIUM",
     "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.2,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "TARGET_HIT"
-  },
-  {
-    "id": 1773231623388,
-    "name": "BANKNIFTY 53900 PE",
-    "lot": 2,
-    "quantity": 60,
-    "buy_price": 1178.0,
-    "sell_price": 1191.8,
-    "pnl": 828.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:09",
-    "sell_time": "13:10",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.19,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "SELL"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "TARGET_HIT"
-  },
-  {
-    "id": 1773231623389,
-    "name": "SENSEX 74700 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 967.55,
-    "sell_price": 981.05,
-    "pnl": 1350.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:11",
-    "sell_time": "13:12",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.2,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "TARGET_HIT"
-  },
-  {
-    "id": 1773231623390,
-    "name": "NIFTY 23200 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 252.4,
-    "sell_price": 264.7,
-    "pnl": 3997.5,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:12",
-    "sell_time": "13:15",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.19,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "TARGET_HIT"
-  },
-  {
-    "id": 1773231623391,
-    "name": "SENSEX 74700 PE",
-    "lot": 4,
-    "quantity": 80,
-    "buy_price": 1024.0,
-    "sell_price": 1013.2,
-    "pnl": -864.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:15",
-    "sell_time": "13:16",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.26,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
+    "sl_pts": 20,
+    "mode": "paper",
     "exit_reason": "STOP_LOSS"
   },
   {
-    "id": 1773231623392,
-    "name": "BANKNIFTY 53800 PE",
-    "lot": 2,
-    "quantity": 60,
-    "buy_price": 1156.05,
-    "sell_price": 1145.95,
-    "pnl": -606.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:16",
-    "sell_time": "13:17",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.26,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623393,
-    "name": "NIFTY 23200 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 260.75,
-    "sell_price": 263.15,
-    "pnl": 780.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:18",
-    "sell_time": "13:23",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.37,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "BUY"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "SIGNAL_NEUTRAL"
-  },
-  {
-    "id": 1773231623394,
-    "name": "NIFTY 23150 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 242.15,
-    "sell_price": 254.55,
-    "pnl": 4030.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:33",
-    "sell_time": "13:38",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.44,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "BUY"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "TARGET_HIT"
-  },
-  {
-    "id": 1773231623395,
-    "name": "SENSEX 74600 PE",
+    "id": 1773231623366,
+    "name": "NIFTY 23150 CE",
     "lot": 1,
-    "quantity": 20,
-    "buy_price": 992.3,
-    "sell_price": 980.35,
-    "pnl": -239.0,
+    "quantity": 65,
+    "buy_price": 165.0,
+    "sell_price": 178.35,
+    "pnl": 867.75,
     "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:33",
-    "sell_time": "13:34",
+    "date": "2026-03-16",
+    "buy_time": "13:54",
+    "sell_time": "14:11",
     "auto": true,
     "signal_strength": "MEDIUM",
     "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.44,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "BUY"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "STOP_LOSS"
+    "sl_pts": 20,
+    "mode": "real",
+    "order_id": "2033459468767256576",
+    "kite_tradingsymbol": "NIFTY2631723150CE",
+    "exit_reason": "TARGET_HIT"
   },
   {
-    "id": 1773231623396,
-    "name": "BANKNIFTY 53700 PE",
-    "lot": 2,
-    "quantity": 60,
-    "buy_price": 1169.15,
-    "sell_price": 1159.15,
-    "pnl": -600.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:38",
-    "sell_time": "13:39",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.56,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "BUY"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623397,
-    "name": "SENSEX 74500 PE",
+    "id": 1773231623367,
+    "name": "NIFTY 23150 CE",
     "lot": 1,
-    "quantity": 20,
-    "buy_price": 976.1,
-    "sell_price": 990.0,
-    "pnl": 278.0,
+    "quantity": 65,
+    "buy_price": 167.35,
+    "sell_price": 179.55,
+    "pnl": 793.0,
     "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:39",
-    "sell_time": "13:41",
+    "date": "2026-03-16",
+    "buy_time": "14:14",
+    "sell_time": "14:18",
     "auto": true,
     "signal_strength": "MEDIUM",
     "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.56,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "BUY"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
+    "sl_pts": 20,
+    "mode": "real",
+    "order_id": "2033464533108318208",
+    "kite_tradingsymbol": "NIFTY2631723150CE",
     "exit_reason": "TARGET_HIT"
-  },
-  {
-    "id": 1773231623398,
-    "name": "NIFTY 23150 PE",
-    "lot": 5,
-    "quantity": 325,
-    "buy_price": 261.0,
-    "sell_price": 249.1,
-    "pnl": -3867.5,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:41",
-    "sell_time": "13:41",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.56,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "BUY"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623399,
-    "name": "SENSEX 74600 PE",
-    "lot": 4,
-    "quantity": 80,
-    "buy_price": 1011.0,
-    "sell_price": 1024.0,
-    "pnl": 1040.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:44",
-    "sell_time": "13:45",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.53,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "TARGET_HIT"
-  },
-  {
-    "id": 1773231623400,
-    "name": "BANKNIFTY 53800 PE",
-    "lot": 2,
-    "quantity": 60,
-    "buy_price": 1212.4,
-    "sell_price": 1202.35,
-    "pnl": -603.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "13:45",
-    "sell_time": "13:45",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.53,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "SELL"
-      }
-    ],
-    "exit_reason": "STOP_LOSS"
-  },
-  {
-    "id": 1773231623401,
-    "name": "SENSEX 74500 PE",
-    "lot": 5,
-    "quantity": 100,
-    "buy_price": 980.0,
-    "sell_price": 969.85,
-    "pnl": -1015.0,
-    "status": "closed",
-    "date": "2026-03-13",
-    "buy_time": "15:20",
-    "sell_time": "15:21",
-    "auto": true,
-    "signal_strength": "MEDIUM",
-    "target_pts": 12,
-    "sl_pts": 10,
-    "india_vix": 22.6,
-    "strategies": [
-      {
-        "name": "MA(5)",
-        "signal": "SELL"
-      },
-      {
-        "name": "RSI(7)",
-        "signal": "BUY"
-      },
-      {
-        "name": "MACD(5,13,1)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "EMA(5,13)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Supertrend(7,2)",
-        "signal": "SELL"
-      },
-      {
-        "name": "Stoch(5,3,3)",
-        "signal": "NEUTRAL"
-      },
-      {
-        "name": "ADX(14)",
-        "signal": "NEUTRAL"
-      }
-    ],
-    "exit_reason": "STOP_LOSS"
   }
 ]

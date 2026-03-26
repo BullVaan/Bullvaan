@@ -1,31 +1,44 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { apiCall } from '../utils/api';
 
-function Login() {
+function Signup() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  const handleLogin = async () => {
+  const handleSignup = async () => {
+    setMessage('');
+    if (!email || !password || !passwordConfirm) {
+      setMessage('All fields required');
+      return;
+    }
+    if (password.length < 6) {
+      setMessage('Password must be at least 6 characters');
+      return;
+    }
+    if (password !== passwordConfirm) {
+      setMessage('Passwords do not match');
+      return;
+    }
     setLoading(true);
-    setError('');
     try {
-      const res = await fetch('/api/login', {
+      const data = await apiCall('/api/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });
-      const data = await res.json();
-      if (res.ok) {
-        localStorage.setItem('auth', 'true');
-        navigate('/dashboard');
-      } else {
-        setError(data.detail || 'Invalid credentials');
-      }
-    } catch {
-      setError('Login failed. Please try again.');
+      // Show success message without auto redirect
+      setMessage(
+        '✅ ' +
+          data.message +
+          ' Click the Sign In button below to login once your account is approved.'
+      );
+    } catch (err) {
+      setMessage(err.message || 'Signup failed.');
     }
     setLoading(false);
   };
@@ -60,7 +73,7 @@ function Login() {
             letterSpacing: 1
           }}
         >
-          Sign In
+          Create Account
         </h2>
         <p
           style={{
@@ -70,12 +83,13 @@ function Login() {
             fontSize: 15
           }}
         >
-          Welcome back! Please login to your account.
+          Create your account with email and password.
         </p>
         <input
           placeholder="Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          type="email"
           style={{
             width: '100%',
             padding: 14,
@@ -86,19 +100,40 @@ function Login() {
             color: '#fff',
             fontSize: 16,
             outline: 'none',
-            marginBottom: 8,
-            transition: 'border 0.2s'
+            marginBottom: 12,
+            transition: 'border 0.2s',
+            boxSizing: 'border-box'
           }}
         />
         <input
           placeholder="Password"
-          type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          type="password"
           style={{
             width: '100%',
             padding: 14,
-            marginTop: 10,
+            marginTop: 0,
+            borderRadius: 10,
+            border: '1px solid #334155',
+            background: '#0f172a',
+            color: '#fff',
+            fontSize: 16,
+            outline: 'none',
+            marginBottom: 12,
+            transition: 'border 0.2s',
+            boxSizing: 'border-box'
+          }}
+        />
+        <input
+          placeholder="Confirm Password"
+          value={passwordConfirm}
+          onChange={(e) => setPasswordConfirm(e.target.value)}
+          type="password"
+          style={{
+            width: '100%',
+            padding: 14,
+            marginTop: 0,
             borderRadius: 10,
             border: '1px solid #334155',
             background: '#0f172a',
@@ -106,12 +141,13 @@ function Login() {
             fontSize: 16,
             outline: 'none',
             marginBottom: 8,
-            transition: 'border 0.2s'
+            transition: 'border 0.2s',
+            boxSizing: 'border-box'
           }}
         />
         <button
-          onClick={handleLogin}
-          disabled={loading}
+          onClick={handleSignup}
+          disabled={loading || !email}
           style={{
             width: '100%',
             padding: 14,
@@ -128,26 +164,48 @@ function Login() {
             transition: 'background 0.2s'
           }}
         >
-          {loading ? 'Logging in...' : 'Login'}
+          {loading ? 'Signing up...' : 'Signup'}
         </button>
-        {error && (
+        {message && (
           <div
             style={{
-              color: '#f87171',
               marginTop: 14,
+              color: '#38bdf8',
               textAlign: 'center',
               fontWeight: 500
             }}
           >
-            {error}
+            {message}
+            {message.includes('✅') && (
+              <button
+                onClick={() => navigate('/login')}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  padding: 10,
+                  marginTop: 14,
+                  background: 'linear-gradient(90deg,#10b981,#34d399)',
+                  border: 'none',
+                  color: 'white',
+                  borderRadius: 8,
+                  fontWeight: 'bold',
+                  fontSize: 15,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px #10b98133',
+                  transition: 'background 0.2s'
+                }}
+              >
+                Sign In
+              </button>
+            )}
           </div>
         )}
         <div style={{ textAlign: 'center', marginTop: 28 }}>
           <span style={{ color: '#94a3b8', fontSize: 15 }}>
-            Don't have an account?
+            Already have an account?
           </span>
           <button
-            onClick={() => navigate('/signup')}
+            onClick={() => navigate('/')}
             style={{
               marginLeft: 8,
               background: 'none',
@@ -160,7 +218,7 @@ function Login() {
               padding: 0
             }}
           >
-            Create New Account
+            Sign In
           </button>
         </div>
       </div>
@@ -168,4 +226,4 @@ function Login() {
   );
 }
 
-export default Login;
+export default Signup;

@@ -9,25 +9,56 @@
   "eod_exit": [15, 25],
   "index_priority": ["^NSEI", "^NSEBANK", "^BSESN"],
   "lot_sizes": {
-    "NIFTY": 65,
+    "NIFTY": 130,
     "BANKNIFTY": 30,
-    "SENSEX": 20
+    "SENSEX": 100
   },
   "signal_rules": {
-    "STRONG": {
-      "target_pts": 20,
-      "sl_pts": 10,
-      "allow_reentry": true,
-      "cooldown_minutes": 3
+    "NIFTY": {
+      "STRONG": {
+        "target_pts": 30,
+        "sl_pts": 20,
+        "allow_reentry": true,
+        "cooldown_minutes": 3
+      },
+      "MEDIUM": {
+        "target_pts": 20,
+        "sl_pts": 10,
+        "allow_reentry": true,
+        "cooldown_minutes": 3
+      }
     },
-    "MEDIUM": {
-      "target_pts": 12,
-      "sl_pts": 10,
-      "allow_reentry": true,
-      "cooldown_minutes": 3
+    "BANKNIFTY": {
+      "STRONG": {
+        "target_pts": 60,
+        "sl_pts": 20,
+        "allow_reentry": true,
+        "cooldown_minutes": 3
+      },
+      "MEDIUM": {
+        "target_pts": 40,
+        "sl_pts": 15,
+        "allow_reentry": true,
+        "cooldown_minutes": 3
+      }
+    },
+    "SENSEX": {
+      "STRONG": {
+        "target_pts": 60,
+        "sl_pts": 30,
+        "allow_reentry": true,
+        "cooldown_minutes": 3
+      },
+      "MEDIUM": {
+        "target_pts": 50,
+        "sl_pts": 20,
+        "allow_reentry": true,
+        "cooldown_minutes": 3
+      }
     }
   },
-  "sl_cooldown_minutes": 5,
+  "adx_threshold": 25,
+  "sl_cooldown_minutes": 2,
   "neutral_cooldown_minutes": 2,
   "test_mode": false
 }

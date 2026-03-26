@@ -5,11 +5,11 @@ import Dashboard from './pages/Dashboard';
 import SwingTrade from './pages/SwingTrade';
 import MainLayout from './layout/MainLayout';
 import Trades from './pages/Trades';
+import ActiveOrders from './pages/ActiveOrders';
 import History from './pages/History';
 import Settings from './pages/Settings';
-import ProtectedRoute from './components/ProtectedRoute';
+import ProtectedRoute from './layout/ProtectedRoute';
 import CandlesCharts from './pages/CandlesCharts';
-import NextMove from './pages/NextMove';
 
 function App() {
   return (
@@ -41,6 +41,14 @@ function App() {
             path="/trades"
             element={
               <ProtectedRoute>
+                <ActiveOrders />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/trades-history"
+            element={
+              <ProtectedRoute>
                 <Trades />
               </ProtectedRoute>
             }
@@ -66,14 +74,6 @@ function App() {
             element={
               <ProtectedRoute>
                 <CandlesCharts />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/next-move"
-            element={
-              <ProtectedRoute>
-                <NextMove />
               </ProtectedRoute>
             }
           />

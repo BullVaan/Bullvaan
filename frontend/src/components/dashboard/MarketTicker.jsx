@@ -1,6 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
-
-
+import { useEffect, useState, useRef, useCallback } from 'react';
 
 function MarketTicker() {
   const [ticker, setTicker] = useState([]);
@@ -8,15 +6,16 @@ function MarketTicker() {
   const wsRef = useRef(null);
   const reconnectTimer = useRef(null);
 
-  const connect = () => {
+  const connect = useCallback(() => {
     // Close existing connection
     if (wsRef.current) {
       wsRef.current.close();
     }
 
-    const wsHost = window.location.port === '3000'
-      ? `${window.location.hostname}:8000`
-      : window.location.host;
+    const wsHost =
+      window.location.port === '3000'
+        ? `${window.location.hostname}:8000`
+        : window.location.host;
     const ws = new WebSocket(`ws://${wsHost}/ws/ticker`);
     wsRef.current = ws;
 
@@ -36,7 +35,7 @@ function MarketTicker() {
     };
 
     ws.onerror = () => ws.close();
-  };
+  }, []);
 
   useEffect(() => {
     connect();
@@ -44,8 +43,7 @@ function MarketTicker() {
       if (wsRef.current) wsRef.current.close();
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
     };
-  }, []);
-
+  }, [connect]);
 
   return (
     <>
@@ -56,10 +54,9 @@ function MarketTicker() {
           background: '#0f172a',
           borderBottom: '1px solid #1e293b',
           padding: '10px 0',
-          position: 'relative',
+          position: 'relative'
         }}
       >
-
         {/* Connection indicator */}
         <div
           style={{
@@ -72,7 +69,7 @@ function MarketTicker() {
             zIndex: 10,
             display: 'flex',
             alignItems: 'center',
-            paddingLeft: 10,
+            paddingLeft: 10
           }}
         >
           <span
@@ -82,11 +79,10 @@ function MarketTicker() {
               height: 8,
               borderRadius: '50%',
               background: connected ? '#22c55e' : '#ef4444',
-              boxShadow: connected ? '0 0 6px #22c55e' : '0 0 6px #ef4444',
+              boxShadow: connected ? '0 0 6px #22c55e' : '0 0 6px #ef4444'
             }}
           />
         </div>
-
 
         {ticker.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#64748b', fontSize: 13 }}>
@@ -99,7 +95,7 @@ function MarketTicker() {
               display: 'flex',
               justifyContent: 'center',
               gap: 20,
-              paddingLeft: 25,
+              paddingLeft: 25
             }}
           >
             {ticker.map((item, idx) => {
@@ -119,7 +115,7 @@ function MarketTicker() {
                     marginRight: 30,
                     background: '#1e293b',
                     borderRadius: 8,
-                    whiteSpace: 'nowrap',
+                    whiteSpace: 'nowrap'
                   }}
                 >
                   <span
@@ -135,13 +131,14 @@ function MarketTicker() {
                           color: '#f1f5f9',
                           fontWeight: 700,
                           fontSize: 18,
-                          fontFamily: 'monospace',
+                          fontFamily: 'monospace'
                         }}
                       >
                         ₹{item.price.toLocaleString('en-IN')}
                       </span>
                       <span style={{ color, fontSize: 15, fontWeight: 600 }}>
-                        {arrow} {Math.abs(item.change)} ({Math.abs(item.change_pct)}%)
+                        {arrow} {Math.abs(item.change)} (
+                        {Math.abs(item.change_pct)}%)
                       </span>
                     </>
                   ) : (

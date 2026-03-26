@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { FaArrowUp } from 'react-icons/fa';
 import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts';
+import { getAuthHeaders } from '../utils/auth';
 
+const BACKEND_URL = 'http://localhost:8000';
 const indexSymbolList = ['NIFTY', 'BANKNIFTY', 'SENSEX'];
 const intervalOptions = [
   { label: '1 min', value: '1m' },
@@ -22,7 +24,9 @@ export default function CandlesCharts() {
   useEffect(() => {
     setLoading(true);
     setError('');
-    fetch(`/candles?symbol=${symbol}&interval=${tf}`)
+    fetch(`${BACKEND_URL}/candles?symbol=${symbol}&interval=${tf}`, {
+      headers: getAuthHeaders()
+    })
       .then((res) => res.json())
       .then((data) => {
         setLoading(false);
@@ -39,7 +43,8 @@ export default function CandlesCharts() {
         // Convert all candle times to IST (add 5.5 hours)
         const dataIST = data.map((candle) => ({
           ...candle,
-          time: candle.time + 19800 // 5.5 hours in seconds
+          time: candle.time + 19800, // 5.5 hours in seconds
+          originalTime: candle.time // Keep original UTC time for display
         }));
         // Filter to regular market hours (9:15 AM to 3:30 PM IST)
         const dataISTFiltered = dataIST.filter((candle) => {
@@ -74,10 +79,21 @@ export default function CandlesCharts() {
         drawSRLines(chart, dataISTFiltered);
         const detected = detectPattern(dataISTFiltered);
         let detectedTime = null;
+        let detectedOriginalTime = null;
         if (detected) {
           detectedTime = dataISTFiltered[dataISTFiltered.length - 1].time;
+          detectedOriginalTime =
+            dataISTFiltered[dataISTFiltered.length - 1].originalTime;
         }
-        setPattern(detected ? { ...detected, time: detectedTime } : null);
+        setPattern(
+          detected
+            ? {
+                ...detected,
+                time: detectedTime,
+                originalTime: detectedOriginalTime
+              }
+            : null
+        );
         if (detected) {
           candleSeries.setMarkers([
             {
@@ -124,7 +140,7 @@ export default function CandlesCharts() {
     const s1 = 2 * pivot - high;
     const levels = [
       { value: r1, color: '#fde047', label: 'R1' },
-      { value: s1, color: '#bbf7d0', label: 'S1' },
+      { value: s1, color: '#bbf7d0', label: 'S1' }
     ];
     levels.forEach(({ value, color, label }) => {
       const line = chart.addSeries(LineSeries, {
@@ -196,7 +212,9 @@ export default function CandlesCharts() {
               }}
             >
               at{' '}
-              {new Date(pattern.time * 1000).toLocaleString('en-IN', {
+              {new Date(
+                (pattern.originalTime || pattern.time) * 1000
+              ).toLocaleString('en-IN', {
                 timeZone: 'Asia/Kolkata'
               })}{' '}
               IST

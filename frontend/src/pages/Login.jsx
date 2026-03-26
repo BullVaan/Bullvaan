@@ -1,33 +1,34 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { apiCall } from '../utils/api';
 
-function Signup() {
+function Login() {
   const [email, setEmail] = useState('');
-  const [message, setMessage] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  const handleSignup = async () => {
-    setMessage('');
+  const handleLogin = async () => {
     setLoading(true);
+    setError('');
     try {
-      const res = await fetch('/api/signup', {
+      const data = await apiCall('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email, password })
       });
-      const data = await res.json();
-      if (res.ok) {
-        setMessage(data.message);
-        setEmail('');
-        setTimeout(() => {
-          navigate('/');
-        }, 2000);
+      // Store JWT token in localStorage (httpOnly cookie would be more secure in production)
+      localStorage.setItem('access_token', data.access_token);
+      localStorage.setItem('user_id', data.user_id);
+      localStorage.setItem('email', data.email);
+      navigate('/dashboard');
+    } catch (err) {
+      if (err.message.includes('403')) {
+        setError('Your account is pending admin approval.');
       } else {
-        setMessage(data.detail || 'Signup failed.');
+        setError(err.message || 'Invalid credentials');
       }
-    } catch {
-      setMessage('Signup failed.');
     }
     setLoading(false);
   };
@@ -62,7 +63,7 @@ function Signup() {
             letterSpacing: 1
           }}
         >
-          Create Account
+          Sign In
         </h2>
         <p
           style={{
@@ -72,7 +73,7 @@ function Signup() {
             fontSize: 15
           }}
         >
-          Enter your email to request access. Admin will share your password.
+          Welcome back! Please login to your account.
         </p>
         <input
           placeholder="Email"
@@ -92,9 +93,28 @@ function Signup() {
             transition: 'border 0.2s'
           }}
         />
+        <input
+          placeholder="Password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          style={{
+            width: '100%',
+            padding: 14,
+            marginTop: 10,
+            borderRadius: 10,
+            border: '1px solid #334155',
+            background: '#0f172a',
+            color: '#fff',
+            fontSize: 16,
+            outline: 'none',
+            marginBottom: 8,
+            transition: 'border 0.2s'
+          }}
+        />
         <button
-          onClick={handleSignup}
-          disabled={loading || !email}
+          onClick={handleLogin}
+          disabled={loading}
           style={{
             width: '100%',
             padding: 14,
@@ -111,26 +131,37 @@ function Signup() {
             transition: 'background 0.2s'
           }}
         >
-          {loading ? 'Signing up...' : 'Signup'}
+          {loading ? 'Logging in...' : 'Login'}
         </button>
-        {message && (
+        {error && (
           <div
             style={{
+              color:
+                error.includes('pending') || error.includes('approval')
+                  ? '#fbbf24'
+                  : '#f87171',
+              background:
+                error.includes('pending') || error.includes('approval')
+                  ? '#78350f'
+                  : '#7f1d1d',
+              border: `1px solid ${error.includes('pending') || error.includes('approval') ? '#f59e0b' : '#991b1b'}`,
+              padding: '12px 14px',
+              borderRadius: '8px',
               marginTop: 14,
-              color: '#38bdf8',
               textAlign: 'center',
-              fontWeight: 500
+              fontWeight: 500,
+              fontSize: 13
             }}
           >
-            {message}
+            {error}
           </div>
         )}
         <div style={{ textAlign: 'center', marginTop: 28 }}>
           <span style={{ color: '#94a3b8', fontSize: 15 }}>
-            Already have an account?
+            Don't have an account?
           </span>
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/signup')}
             style={{
               marginLeft: 8,
               background: 'none',
@@ -143,7 +174,7 @@ function Signup() {
               padding: 0
             }}
           >
-            Sign In
+            Create New Account
           </button>
         </div>
       </div>
@@ -151,4 +182,4 @@ function Signup() {
   );
 }
 
-export default Signup;
+export default Login;

@@ -1,9 +1,24 @@
-import { useState } from 'react';
-import { Save, LogOut, Bell, Lock, Sliders, Palette, Key } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Save, LogOut } from 'lucide-react';
+import { getAuthHeaders } from '../utils/auth';
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState('account');
   const [saved, setSaved] = useState(false);
+
+  // Kite Credentials State
+  const [kiteCredentials, setKiteCredentials] = useState({
+    apiKey: '',
+    accessToken: '',
+    hasCredentials: false
+  });
+  const [credentialsMessage, setCredentialsMessage] = useState('');
+  const [credentialsLoading, setCredentialsLoading] = useState(false);
+
+  // Load Kite credentials status on component mount
+  useEffect(() => {
+    checkKiteCredentialsStatus();
+  }, []);
 
   // Account Settings State
   const [account, setAccount] = useState({
@@ -38,17 +53,6 @@ export default function Settings() {
     chartType: localStorage.getItem('chart_type') || 'candlestick',
     defaultTimeframe: localStorage.getItem('default_tf') || '5m',
     decimalPlaces: localStorage.getItem('decimal_places') || '2'
-  });
-
-  // API Settings State
-  const [api, setApi] = useState({
-    apiKey: localStorage.getItem('api_key')
-      ? '••••••••' + localStorage.getItem('api_key')?.slice(-4)
-      : 'Not configured',
-    apiSecret: localStorage.getItem('api_secret')
-      ? '••••••••'
-      : 'Not configured',
-    syncFrequency: localStorage.getItem('sync_frequency') || '10'
   });
 
   const handleAccountChange = (field, value) => {
@@ -97,6 +101,108 @@ export default function Settings() {
 
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+  };
+
+  // Kite Credentials Functions
+  const checkKiteCredentialsStatus = async () => {
+    try {
+      const res = await fetch('/user/kite-credentials/status', {
+        headers: getAuthHeaders()
+      });
+      const data = await res.json();
+      setKiteCredentials((prev) => ({
+        ...prev,
+        hasCredentials: data.has_credentials
+      }));
+    } catch (err) {
+      console.error('Error checking credentials:', err);
+    }
+  };
+
+  const handleSaveKiteCredentials = async (e) => {
+    e.preventDefault();
+    setCredentialsLoading(true);
+    setCredentialsMessage('');
+
+    if (!kiteCredentials.apiKey || !kiteCredentials.accessToken) {
+      setCredentialsMessage('❌ API Key and Access Token are required');
+      setCredentialsLoading(false);
+      return;
+    }
+
+    try {
+      const res = await fetch('/user/kite-credentials/save', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          api_key: kiteCredentials.apiKey,
+          access_token: kiteCredentials.accessToken
+        })
+      });
+
+      const data = await res.json();
+
+      if (data.status === 'ok') {
+        setCredentialsMessage(
+          '✅ Credentials saved and encrypted successfully!'
+        );
+        setKiteCredentials({
+          apiKey: '',
+          accessToken: '',
+          hasCredentials: true
+        });
+        checkKiteCredentialsStatus();
+        setTimeout(() => setCredentialsMessage(''), 3000);
+      } else {
+        setCredentialsMessage(
+          `❌ ${data.detail || 'Error saving credentials'}`
+        );
+      }
+    } catch (err) {
+      setCredentialsMessage(`❌ Error: ${err.message}`);
+    } finally {
+      setCredentialsLoading(false);
+    }
+  };
+
+  const handleDeleteKiteCredentials = async () => {
+    if (
+      !window.confirm(
+        'Delete saved credentials? You will need to add new ones to trade.'
+      )
+    ) {
+      return;
+    }
+
+    setCredentialsLoading(true);
+    setCredentialsMessage('');
+
+    try {
+      const res = await fetch('/user/kite-credentials', {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
+
+      const data = await res.json();
+
+      if (data.status === 'ok') {
+        setCredentialsMessage('✅ Credentials deleted successfully');
+        setKiteCredentials({
+          apiKey: '',
+          accessToken: '',
+          hasCredentials: false
+        });
+        setTimeout(() => setCredentialsMessage(''), 3000);
+      } else {
+        setCredentialsMessage(
+          `❌ ${data.detail || 'Error deleting credentials'}`
+        );
+      }
+    } catch (err) {
+      setCredentialsMessage(`❌ Error: ${err.message}`);
+    } finally {
+      setCredentialsLoading(false);
+    }
   };
 
   return (
@@ -453,69 +559,189 @@ export default function Settings() {
           </Section>
         )}
 
-        {/* API SETTINGS */}
+        {/* API SETTINGS - KITE CREDENTIALS */}
         {activeTab === 'api' && (
-          <Section title="API & Integration">
+          <Section title="Kite API Credentials">
             <InfoBox>
-              ℹ️ Manage your Zerodha Kite API credentials here. Your API key is
-              encrypted and secure.
+              ℹ️ Save your Zerodha Kite API credentials securely. Your
+              credentials are encrypted and used for trading orders only. Charts
+              and market data continue using the application's shared
+              credentials.
             </InfoBox>
 
-            <SettingItem>
-              <Label>API Key Status</Label>
-              <p style={{ color: '#22c55e', fontWeight: 600 }}>
-                ✅ {api.apiKey}
+            {/* Status */}
+            <div
+              style={{
+                padding: '16px',
+                borderRadius: '8px',
+                marginBottom: '16px',
+                background: kiteCredentials.hasCredentials
+                  ? '#065f46'
+                  : '#7f1d1d',
+                border: `1px solid ${kiteCredentials.hasCredentials ? '#10b981' : '#dc2626'}`,
+                color: kiteCredentials.hasCredentials ? '#86efac' : '#fca5a5'
+              }}
+            >
+              <p style={{ margin: 0, fontWeight: 600 }}>
+                {kiteCredentials.hasCredentials
+                  ? '✅ Credentials Saved'
+                  : '⚠️ No Credentials Saved'}
               </p>
-              <small style={{ color: '#64748b' }}>
-                Your API key is securely stored
+              <small style={{ display: 'block', marginTop: 4 }}>
+                {kiteCredentials.hasCredentials
+                  ? 'Your Kite credentials are securely stored and will be used for trading orders.'
+                  : "Without credentials, trading orders will use the application's shared account."}
               </small>
-            </SettingItem>
+            </div>
 
-            <SettingItem>
-              <Label>API Secret Status</Label>
-              <p style={{ color: '#22c55e', fontWeight: 600 }}>
-                ✅ {api.apiSecret}
-              </p>
-              <small style={{ color: '#64748b' }}>
-                Secret is encrypted and never displayed
-              </small>
-            </SettingItem>
-
-            <SettingItem>
-              <Label>Data Sync Frequency (seconds)</Label>
-              <Input
-                type="number"
-                value={api.syncFrequency}
-                onChange={(e) => {
-                  setApi((prev) => ({
-                    ...prev,
-                    syncFrequency: e.target.value
-                  }));
-                  localStorage.setItem('sync_frequency', e.target.value);
-                }}
-                min="5"
-                max="60"
-              />
-              <small style={{ color: '#64748b' }}>
-                How often to sync data from Zerodha
-              </small>
-            </SettingItem>
-
-            <DangerZone>
-              <button
+            {/* Error/Success Message */}
+            {credentialsMessage && (
+              <div
                 style={{
-                  ...dangerButtonStyle,
-                  cursor: 'not-allowed',
-                  opacity: 0.6
+                  padding: '12px',
+                  borderRadius: '8px',
+                  marginBottom: '16px',
+                  background: credentialsMessage.includes('✅')
+                    ? '#065f46'
+                    : '#7f1d1d',
+                  color: credentialsMessage.includes('✅')
+                    ? '#86efac'
+                    : '#fca5a5',
+                  fontSize: '13px'
                 }}
-                disabled
               >
-                🔄 Reset API Credentials
+                {credentialsMessage}
+              </div>
+            )}
+
+            {/* Form */}
+            <form
+              onSubmit={handleSaveKiteCredentials}
+              style={{ marginBottom: 24 }}
+            >
+              <SettingItem>
+                <Label>🔑 API Key</Label>
+                <Input
+                  type="password"
+                  value={kiteCredentials.apiKey}
+                  onChange={(e) =>
+                    setKiteCredentials((prev) => ({
+                      ...prev,
+                      apiKey: e.target.value
+                    }))
+                  }
+                  placeholder="Your Zerodha API key"
+                  disabled={credentialsLoading}
+                />
+                <small
+                  style={{ color: '#64748b', marginTop: 4, display: 'block' }}
+                >
+                  Get this from Kite Console → Settings → API Consents
+                </small>
+              </SettingItem>
+
+              <SettingItem>
+                <Label>🎫 24-Hour Access Token</Label>
+                <Input
+                  type="password"
+                  value={kiteCredentials.accessToken}
+                  onChange={(e) =>
+                    setKiteCredentials((prev) => ({
+                      ...prev,
+                      accessToken: e.target.value
+                    }))
+                  }
+                  placeholder="Your 24-hour access token"
+                  disabled={credentialsLoading}
+                />
+                <small
+                  style={{ color: '#64748b', marginTop: 4, display: 'block' }}
+                >
+                  Generate this in Kite Console after login. Token expires after
+                  24 hours.
+                </small>
+              </SettingItem>
+
+              <button
+                type="submit"
+                disabled={credentialsLoading}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: '#22c55e',
+                  color: 'black',
+                  cursor: credentialsLoading ? 'not-allowed' : 'pointer',
+                  fontWeight: '600',
+                  opacity: credentialsLoading ? 0.6 : 1,
+                  transition: '0.2s'
+                }}
+              >
+                {credentialsLoading ? '⏳ Saving...' : '💾 Save Credentials'}
               </button>
-              <small style={{ color: '#64748b', marginTop: 8 }}>
-                Contact support to reset API credentials
-              </small>
-            </DangerZone>
+            </form>
+
+            {/* Instructions */}
+            <SubSection title="How to Get Credentials">
+              <ol style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.8 }}>
+                <li>
+                  Login to{' '}
+                  <a
+                    href="https://kite.trade"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: '#22c55e', textDecoration: 'none' }}
+                  >
+                    Kite Console
+                  </a>
+                </li>
+                <li>
+                  Go to <strong>Settings</strong> →{' '}
+                  <strong>API Consents</strong>
+                </li>
+                <li>
+                  Copy your <strong>API Key</strong>
+                </li>
+                <li>
+                  Click <strong>Generate Token</strong> to get a new 24-hour
+                  access token
+                </li>
+                <li>Copy the access token (keep it secret!)</li>
+                <li>Paste both above and click "Save Credentials"</li>
+              </ol>
+            </SubSection>
+
+            {/* Change/Delete */}
+            {kiteCredentials.hasCredentials && (
+              <DangerZone>
+                <button
+                  onClick={handleDeleteKiteCredentials}
+                  disabled={credentialsLoading}
+                  style={{
+                    ...dangerButtonStyle,
+                    opacity: credentialsLoading ? 0.6 : 1,
+                    cursor: credentialsLoading ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  🗑️ {credentialsLoading ? 'Deleting...' : 'Delete Credentials'}
+                </button>
+                <small
+                  style={{ color: '#64748b', marginTop: 8, display: 'block' }}
+                >
+                  Removes your saved credentials. You can add new ones anytime.
+                </small>
+              </DangerZone>
+            )}
+
+            {/* No Credentials Info */}
+            {!kiteCredentials.hasCredentials && (
+              <InfoBox>
+                ℹ️ <strong>When you provide credentials:</strong> All your
+                trading orders will execute under your own Kite account in
+                real-time. Without credentials, the app uses shared credentials
+                (not recommended for production).
+              </InfoBox>
+            )}
           </Section>
         )}
       </div>

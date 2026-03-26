@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import StockModal from '../components/StockModal';
-import PremarketSignals from '../components/PremarketSignals';
+import StockModal from '../components/common/StockModal';
+import PremarketSignals from '../components/swingTrade/PremarketSignals';
 
 export default function SwingTrade() {
   const [stocks, setStocks] = useState([]);
