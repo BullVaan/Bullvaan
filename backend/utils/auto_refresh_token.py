@@ -77,8 +77,10 @@ def get_request_token() -> str:
         page.wait_for_selector('input[type="number"], input[placeholder*="TOTP"], input[placeholder*="OTP"]', timeout=15000)
         time.sleep(1)  # slight delay so TOTP input is ready
 
-        # Generate TOTP
-        totp_code = pyotp.TOTP(TOTP_SECRET).now()
+        # Generate TOTP (pad secret to valid base32 length)
+        padded_secret = TOTP_SECRET.upper().strip()
+        padded_secret += '=' * (-len(padded_secret) % 8)
+        totp_code = pyotp.TOTP(padded_secret).now()
         print(f"Generated TOTP: {totp_code}")
 
         # Fill TOTP
