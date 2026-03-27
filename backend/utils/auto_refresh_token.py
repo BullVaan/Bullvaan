@@ -53,9 +53,8 @@ def get_request_token() -> str:
 
         request_token = None
 
-        # Intercept the redirect to 127.0.0.1 BEFORE the browser tries to connect.
-        # Zerodha redirects to: https://127.0.0.1/?request_token=xxx&action=login&status=success
-        # We abort the navigation (preventing ERR_CONNECTION_REFUSED) and grab the token.
+        # Intercept the redirect to 127.0.0.1:8000 BEFORE the browser tries to connect.
+        # Zerodha redirects to: http://127.0.0.1:8000/zerodha-auth?request_token=xxx&...
         def intercept_redirect(route):
             nonlocal request_token
             url = route.request.url
@@ -65,9 +64,8 @@ def get_request_token() -> str:
                 print(f"Captured request_token: {token[:8]}...")
             route.abort()
 
-        page.route("**/127.0.0.1/**", intercept_redirect)
-        page.route("http://127.0.0.1*", intercept_redirect)
-        page.route("https://127.0.0.1*", intercept_redirect)
+        page.route("http://127.0.0.1**", intercept_redirect)
+        page.route("https://127.0.0.1**", intercept_redirect)
 
         # Navigate to Zerodha login
         page.goto(login_url, wait_until="networkidle", timeout=30000)
