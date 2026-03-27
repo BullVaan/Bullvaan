@@ -35,3 +35,11 @@ jobs:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: python backend/utils/auto_refresh_token.py
+
+      - name: Upload debug screenshot (if login failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zerodha-debug-screenshot
+          path: /tmp/zerodha_debug.png
+          if-no-files-found: ignore
