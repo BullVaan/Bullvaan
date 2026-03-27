@@ -110,7 +110,9 @@ function Dashboard() {
       });
       const data = await res.json();
       setAutoTrader(data);
-      setTradingMode(data.trading_mode || 'paper');
+      if (data.trading_mode) {
+        setTradingMode(data.trading_mode);
+      }
     } catch {
       /* ignore */
     }

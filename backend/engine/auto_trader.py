@@ -444,7 +444,7 @@ class AutoTrader:
             logger.error(f"Error getting option tradingsymbol: {e}")
             return None
 
-    def _execute_buy(self, prefix, option_name, buy_price, lots, lot_size, signal_strength, rule):
+    def _execute_buy(self, prefix, option_name, buy_price, lots, lot_size, signal_strength, rule, sig=None):
         """Execute buy — saves to database, real places Kite order"""
         ist = _ist_now()
         quantity = lots * lot_size
