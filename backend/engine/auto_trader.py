@@ -196,6 +196,11 @@ class AutoTrader:
         self._daily_pnl = 0.0
         self._last_reset_date = None
         self._task = None
+
+        # In-memory open positions — updated instantly on buy/sell.
+        # Primary source of truth to prevent DB-lag race conditions.
+        # {prefix: trade_dict}  e.g. {"NIFTY": {...}, "BANKNIFTY": {...}}
+        self._open_positions = {}
         
         # Real trading state
         self._account_cache = {}  # Cache for account info
@@ -216,22 +221,31 @@ class AutoTrader:
             logger.info("Auto-trader: daily counters reset")
 
     def _load_daily_stats_from_db(self):
-        """Seed daily P&L and trade count from DB for today (handles restart/multi-session)"""
+        """Seed daily P&L, trade count, and open positions from DB (handles restart/multi-session)"""
         try:
             today_str = _ist_now().strftime('%Y-%m-%d')
             all_trades = load_trades_for_autotrader(user_id=self.user_id)
+            today_trades = [t for t in all_trades if t.get('date') == today_str and t.get('auto')]
+
             today_closed = [
-                t for t in all_trades
-                if t.get('date') == today_str
-                and t.get('status') == 'closed'
-                and t.get('auto')
+                t for t in today_trades
+                if t.get('status') == 'closed'
                 and t.get('mode', 'paper') == self.trading_mode
             ]
             self._daily_trade_count = len(today_closed)
             self._daily_pnl = round(sum(t.get('pnl', 0) for t in today_closed), 2)
+
+            # Restore in-memory open positions so the engine doesn't re-enter existing trades
+            self._open_positions = {}
+            for t in today_trades:
+                if t.get('status') == 'open':
+                    prefix = t['name'].split()[0]
+                    self._open_positions[prefix] = t
+
             logger.info(
-                f"Auto-trader: seeded daily stats from DB — "
-                f"trades={self._daily_trade_count}, pnl=₹{self._daily_pnl}"
+                f"Auto-trader: seeded from DB — "
+                f"trades={self._daily_trade_count}, pnl=₹{self._daily_pnl}, "
+                f"open_positions={list(self._open_positions.keys())}"
             )
         except Exception as e:
             logger.warning(f"Auto-trader: could not load daily stats from DB: {e}")
@@ -247,14 +261,20 @@ class AutoTrader:
         return self.kite
 
     def _get_open_trades(self):
-        """Get all open trades from database"""
-        trades = load_trades_for_autotrader()
-        return [t for t in trades if t.get('status') == 'open']
+        """Get all open trades from database (scoped to this user)"""
+        trades = load_trades_for_autotrader(user_id=self.user_id)
+        return [t for t in trades if t.get('status') == 'open' and t.get('auto')]
 
     def _get_open_trade_for(self, prefix):
-        """Get open trade for a specific index (NIFTY/BANKNIFTY/SENSEX)"""
+        """Get open trade for a specific index — in-memory first, DB as fallback."""
+        # In-memory is the primary source — avoids DB latency race condition
+        if prefix in self._open_positions:
+            return self._open_positions[prefix]
+        # Fallback: check DB (e.g. after server restart)
         for t in self._get_open_trades():
             if t['name'].upper().startswith(prefix):
+                # Sync back to in-memory so future ticks are fast
+                self._open_positions[prefix] = t
                 return t
         return None
 
@@ -545,6 +565,8 @@ class AutoTrader:
 
         # Save to database (pass user_id for multi-session support)
         save_auto_trade(trade, user_id=self.user_id)
+        # Update in-memory immediately so next tick sees the open position
+        self._open_positions[prefix] = trade
         self._daily_trade_count += 1
 
         logger.info(
@@ -607,6 +629,9 @@ class AutoTrader:
 
         # Update in database (pass user_id for multi-session support)
         update_auto_trade_sell(trade['id'], sell_price, ist.strftime('%H:%M'), reason, user_id=self.user_id)
+        # Remove from in-memory positions immediately so next tick can enter fresh
+        prefix = trade['name'].split()[0]
+        self._open_positions.pop(prefix, None)
         self._daily_pnl += pnl
 
         logger.info(
