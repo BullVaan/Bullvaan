@@ -87,17 +87,35 @@ def get_request_token() -> str:
         # Generate TOTP (pad secret to valid base32 length)
         padded_secret = TOTP_SECRET.upper().strip().replace(' ', '').replace('-', '')
         padded_secret += '=' * (-len(padded_secret) % 8)
-        totp_code = pyotp.TOTP(padded_secret).now()
+
+        # Generate fresh TOTP right before typing to avoid 30s window expiry
+        totp = pyotp.TOTP(padded_secret)
+        totp_code = totp.now()
         print(f"Generated TOTP: {totp_code}")
 
-        # Fill TOTP
+        # Find TOTP input and type digit-by-digit (Zerodha uses individual dot fields)
         totp_input = (page.query_selector('input[type="number"]') or
                       page.query_selector('input[placeholder*="TOTP"]') or
                       page.query_selector('input[placeholder*="OTP"]'))
         if not totp_input:
             raise RuntimeError("Could not find TOTP input field")
-        totp_input.fill(totp_code)
-        print("Filled TOTP — waiting for redirect...")
+
+        totp_input.click()
+        for digit in totp_code:
+            totp_input.type(digit, delay=100)
+        print("Typed TOTP digits")
+
+        # Click the Continue / Submit button
+        time.sleep(0.5)
+        try:
+            submit_btn = (page.query_selector('button[type="submit"]') or
+                          page.query_selector('button:has-text("Continue")') or
+                          page.query_selector('button:has-text("Login")'))
+            if submit_btn:
+                submit_btn.click()
+                print("Clicked submit button")
+        except Exception as e:
+            print(f"Submit click failed (may auto-submit): {e}")
 
         # Wait up to 30s for request_token to appear in any request URL
         for i in range(60):
