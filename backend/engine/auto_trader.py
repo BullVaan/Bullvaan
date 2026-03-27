@@ -215,6 +215,27 @@ class AutoTrader:
             self._last_reset_date = today
             logger.info("Auto-trader: daily counters reset")
 
+    def _load_daily_stats_from_db(self):
+        """Seed daily P&L and trade count from DB for today (handles restart/multi-session)"""
+        try:
+            today_str = _ist_now().strftime('%Y-%m-%d')
+            all_trades = load_trades_for_autotrader(user_id=self.user_id)
+            today_closed = [
+                t for t in all_trades
+                if t.get('date') == today_str
+                and t.get('status') == 'closed'
+                and t.get('auto')
+                and t.get('mode', 'paper') == self.trading_mode
+            ]
+            self._daily_trade_count = len(today_closed)
+            self._daily_pnl = round(sum(t.get('pnl', 0) for t in today_closed), 2)
+            logger.info(
+                f"Auto-trader: seeded daily stats from DB — "
+                f"trades={self._daily_trade_count}, pnl=₹{self._daily_pnl}"
+            )
+        except Exception as e:
+            logger.warning(f"Auto-trader: could not load daily stats from DB: {e}")
+
     def _get_kite_instance(self):
         """Get appropriate Kite instance for trading
         
@@ -803,6 +824,7 @@ class AutoTrader:
             return
         self.enabled = True
         self._reset_daily()
+        self._load_daily_stats_from_db()
         if loop:
             self._task = loop.create_task(self.run())
         else:
