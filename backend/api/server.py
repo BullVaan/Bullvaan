@@ -2185,16 +2185,68 @@ async def auto_trader_set_mode(body: dict = Body(...), current_user: dict = Depe
     - trading_mode: current mode after the request
     - account_balance: available balance (real mode only)
     """
+    session_id = current_user.get('session_id')
+    user_id = current_user.get('user_id')
     try:
         mode = body.get("mode", "paper")
-        result = auto_trader.set_trading_mode(mode)
-        return result
+
+        # Use per-session trader if it exists (auto-trader is running)
+        with _auto_traders_lock:
+            if session_id in _auto_traders_by_session:
+                trader, stored_uid, ts = _auto_traders_by_session[session_id]
+                if stored_uid == user_id:
+                    result = trader.set_trading_mode(mode)
+                    return result
+
+        # No running session trader (user stopped before switching — normal flow).
+        # For paper mode, just confirm — no Kite needed.
+        if mode == "paper":
+            return {"status": "ok", "message": "Switched to paper mode", "trading_mode": "paper"}
+
+        # For real mode: fetch balance using the user's own Kite credentials.
+        if mode == "real":
+            from utils.user_credentials import get_user_credentials
+            from kiteconnect import KiteConnect
+            creds = get_user_credentials(user_id)
+            if not creds:
+                return {
+                    "status": "error",
+                    "message": "No Kite credentials found. Please save your API key and access token in Settings.",
+                    "trading_mode": "paper"
+                }
+            try:
+                user_kite = KiteConnect(api_key=kite.api_key)
+                user_kite.set_access_token(creds['access_token'])
+                margins = user_kite.margins()
+                available = 0
+                if "equity" in margins and isinstance(margins["equity"], dict):
+                    avail_dict = margins["equity"].get("available", {})
+                    available = (
+                        avail_dict.get("live_balance")
+                        or avail_dict.get("opening_balance")
+                        or avail_dict.get("cash", 0)
+                    )
+                return {
+                    "status": "ok",
+                    "message": "Switched to real mode",
+                    "trading_mode": "real",
+                    "account_balance": round(float(available), 2)
+                }
+            except Exception as ke:
+                logger.error(f"Kite balance fetch failed for user {user_id}: {ke}")
+                return {
+                    "status": "error",
+                    "message": f"Could not verify Kite connection: {str(ke)}",
+                    "trading_mode": "paper"
+                }
+
+        return {"status": "error", "message": "Invalid mode", "trading_mode": "paper"}
     except Exception as e:
         logger.error(f"Error in trading mode switch: {e}", exc_info=True)
         return {
             "status": "error",
             "message": f"Internal server error: {str(e)}",
-            "trading_mode": auto_trader.trading_mode
+            "trading_mode": "paper"
         }
 
 
@@ -2206,17 +2258,28 @@ def auto_trader_account_balance(current_user: dict = Depends(get_current_user)):
     - balance: available cash margin (None if not in real mode)
     - trading_mode: current trading mode
     """
-    if auto_trader.trading_mode != "real":
+    session_id = current_user.get('session_id')
+    user_id = current_user.get('user_id')
+
+    # Resolve to per-session trader if available
+    trader = auto_trader
+    with _auto_traders_lock:
+        if session_id in _auto_traders_by_session:
+            t, stored_uid, ts = _auto_traders_by_session[session_id]
+            if stored_uid == user_id:
+                trader = t
+
+    if trader.trading_mode != "real":
         return {
             "balance": None,
-            "trading_mode": auto_trader.trading_mode,
-            "message": f"Not in real mode. Current mode: {auto_trader.trading_mode}"
+            "trading_mode": trader.trading_mode,
+            "message": f"Not in real mode. Current mode: {trader.trading_mode}"
         }
     
-    balance = auto_trader._get_kite_account_balance()
+    balance = trader._get_kite_account_balance()
     return {
         "balance": round(balance, 2) if balance else None,
-        "trading_mode": auto_trader.trading_mode,
+        "trading_mode": trader.trading_mode,
         "error": "Cannot fetch balance" if balance is None else None
     }
 

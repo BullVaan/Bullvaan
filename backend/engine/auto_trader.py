@@ -318,8 +318,9 @@ class AutoTrader:
     # ─── Real Trading Functions ────────────────────
 
     def _get_kite_account_balance(self):
-        """Fetch available margin from Kite account (cached for 1 min)"""
-        if not self.kite:
+        """Fetch available margin from user's own Kite account (cached for 1 min).
+        NEVER uses admin credentials — returns None if user has no personal Kite creds."""
+        if not self.user_kite:
             return None
         
         try:
@@ -330,8 +331,8 @@ class AutoTrader:
                 if age.total_seconds() < 60:  # Cache for 1 minute
                     return cached["value"]
             
-            # Fetch fresh - using per-user Kite if available, otherwise admin kite
-            kite_instance = self._get_kite_instance()
+            # Fetch fresh using user's own Kite credentials only
+            kite_instance = self.user_kite
             margins = kite_instance.margins()
             
             logger.info(f"DEBUG: Full Kite margins response: {margins}")
@@ -492,8 +493,8 @@ class AutoTrader:
             "mode": self.trading_mode,
         }
 
-        # Real trading: place actual order via Kite
-        if self.trading_mode == "real" and self.kite:
+        # Real trading: place actual order via Kite (ONLY with user's own credentials — never admin)
+        if self.trading_mode == "real" and self.user_kite:
             try:
                 parts = option_name.split()
                 strike = float(parts[1])
@@ -564,8 +565,8 @@ class AutoTrader:
         qty = int(trade.get('quantity', trade.get('lot', 1)))
         pnl = round((sell_price - trade['buy_price']) * qty, 2)
 
-        # Real trading: place sell order via Kite (but NOT for BO — broker already exited)
-        if trade.get("mode") == "real" and self.kite and "order_id" in trade:
+        # Real trading: place sell order via Kite (ONLY with user's own credentials — never admin)
+        if trade.get("mode") == "real" and self.user_kite and "order_id" in trade:
             # Check if this was a BO trade
             is_bo_order = trade.get("is_bo_trade", False)
             
@@ -878,13 +879,13 @@ class AutoTrader:
         
         self.trading_mode = mode
         
-        # In real mode, verify Kite connection
+        # In real mode, verify user has their OWN Kite connection (never use admin credentials for real orders)
         if mode == "real":
-            if not self.kite:
+            if not self.user_kite:
                 self.trading_mode = "paper"  # Revert
                 return {
                     "status": "error",
-                    "message": "Kite API not configured",
+                    "message": "No personal Kite credentials found. Please save your API key and access token in Settings before switching to real mode.",
                     "trading_mode": self.trading_mode
                 }
             
