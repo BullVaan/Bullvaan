@@ -51,32 +51,35 @@ def get_request_token() -> str:
         context = browser.new_context()
         page = context.new_page()
 
-        # Capture request_token from outgoing requests (catches 127.0.0.1 redirect
-        # before the browser even tries to connect, avoiding ERR_CONNECTION_REFUSED)
         request_token = None
 
-        def handle_request(request):
+        # Intercept the redirect to 127.0.0.1 BEFORE the browser tries to connect.
+        # Zerodha redirects to: https://127.0.0.1/?request_token=xxx&action=login&status=success
+        # We abort the navigation (preventing ERR_CONNECTION_REFUSED) and grab the token.
+        def intercept_redirect(route):
             nonlocal request_token
-            url = request.url
+            url = route.request.url
             if "request_token=" in url:
                 token = url.split("request_token=")[1].split("&")[0]
-                if token:
-                    request_token = token
-                    print(f"Captured request_token from outgoing request URL")
+                request_token = token
+                print(f"Captured request_token: {token[:8]}...")
+            route.abort()
 
-        page.on("request", handle_request)
+        page.route("**/127.0.0.1/**", intercept_redirect)
+        page.route("http://127.0.0.1*", intercept_redirect)
+        page.route("https://127.0.0.1*", intercept_redirect)
 
         # Navigate to Zerodha login
         page.goto(login_url, wait_until="networkidle", timeout=30000)
 
-        # Fill user ID
+        # Fill user ID and password
         page.fill('input[type="text"]', USER_ID)
         page.fill('input[type="password"]', PASSWORD)
         page.click('button[type="submit"]')
 
         # Wait for TOTP screen
         page.wait_for_selector('input[type="number"], input[placeholder*="TOTP"], input[placeholder*="OTP"]', timeout=15000)
-        time.sleep(1)  # slight delay so TOTP input is ready
+        time.sleep(1)
 
         # Generate TOTP (pad secret to valid base32 length)
         padded_secret = TOTP_SECRET.upper().strip().replace(' ', '').replace('-', '')
@@ -85,35 +88,15 @@ def get_request_token() -> str:
         print(f"Generated TOTP: {totp_code}")
 
         # Fill TOTP
-        totp_input = page.query_selector('input[type="number"]') or \
-                     page.query_selector('input[placeholder*="TOTP"]') or \
-                     page.query_selector('input[placeholder*="OTP"]')
+        totp_input = (page.query_selector('input[type="number"]') or
+                      page.query_selector('input[placeholder*="TOTP"]') or
+                      page.query_selector('input[placeholder*="OTP"]'))
         if not totp_input:
             raise RuntimeError("Could not find TOTP input field")
         totp_input.fill(totp_code)
 
-        # Submit TOTP — Zerodha auto-submits on 6 digits, but click if needed
-        try:
-            submit = page.query_selector('button[type="submit"]')
-            if submit:
-                submit.click()
-        except Exception:
-            pass
-
-        # Wait up to 30 seconds for the redirect with request_token
-        for _ in range(60):
-            if request_token:
-                break
-            # Also check current page URL in case the page navigated
-            try:
-                current_url = page.url
-                if "request_token=" in current_url:
-                    request_token = current_url.split("request_token=")[1].split("&")[0]
-                    print(f"Captured request_token from page URL")
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
+        # Zerodha auto-submits after 6 digits; wait up to 20s for the intercepted redirect
+        page.wait_for_timeout(20000)
 
         browser.close()
 
