@@ -2050,6 +2050,7 @@ def auto_trader_status(current_user: dict = Depends(get_current_user)):
                 # Get status from this session's trader
                 status = trader.get_status()
                 status['enabled_for_session'] = trader.enabled
+                status['enabled_for_user'] = trader.enabled
                 status['session_id'] = session_id
                 status['user_id'] = user_id
                 status['active_sessions'] = len(_auto_traders_by_session)
@@ -2060,6 +2061,7 @@ def auto_trader_status(current_user: dict = Depends(get_current_user)):
             "enabled": False,
             "running": False,
             "enabled_for_session": False,
+            "enabled_for_user": False,
             "session_id": session_id,
             "user_id": user_id,
             "active_sessions": len(_auto_traders_by_session),
