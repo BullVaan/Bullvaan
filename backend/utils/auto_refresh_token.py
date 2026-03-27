@@ -104,6 +104,8 @@ def get_request_token() -> str:
         for digit in totp_code:
             totp_input.type(digit, delay=100)
         print("Typed TOTP digits")
+        page.screenshot(path="/tmp/zerodha_debug.png")
+        print("Screenshot saved to /tmp/zerodha_debug.png")
         if totp_input.evaluate("el => el.value.length") < 6:
             raise RuntimeError("TOTP input incomplete")
 
