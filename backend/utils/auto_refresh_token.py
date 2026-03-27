@@ -51,19 +51,20 @@ def get_request_token() -> str:
         context = browser.new_context()
         page = context.new_page()
 
-        # Capture any redirect that contains request_token
+        # Capture request_token from outgoing requests (catches 127.0.0.1 redirect
+        # before the browser even tries to connect, avoiding ERR_CONNECTION_REFUSED)
         request_token = None
 
-        def handle_response(response):
+        def handle_request(request):
             nonlocal request_token
-            url = response.url
+            url = request.url
             if "request_token=" in url:
                 token = url.split("request_token=")[1].split("&")[0]
                 if token:
                     request_token = token
-                    print(f"Captured request_token from response URL")
+                    print(f"Captured request_token from outgoing request URL")
 
-        page.on("response", handle_response)
+        page.on("request", handle_request)
 
         # Navigate to Zerodha login
         page.goto(login_url, wait_until="networkidle", timeout=30000)
@@ -78,7 +79,7 @@ def get_request_token() -> str:
         time.sleep(1)  # slight delay so TOTP input is ready
 
         # Generate TOTP (pad secret to valid base32 length)
-        padded_secret = TOTP_SECRET.upper().strip()
+        padded_secret = TOTP_SECRET.upper().strip().replace(' ', '').replace('-', '')
         padded_secret += '=' * (-len(padded_secret) % 8)
         totp_code = pyotp.TOTP(padded_secret).now()
         print(f"Generated TOTP: {totp_code}")
@@ -99,10 +100,19 @@ def get_request_token() -> str:
         except Exception:
             pass
 
-        # Wait for redirect URL that includes request_token (up to 20 seconds)
-        for _ in range(40):
+        # Wait up to 30 seconds for the redirect with request_token
+        for _ in range(60):
             if request_token:
                 break
+            # Also check current page URL in case the page navigated
+            try:
+                current_url = page.url
+                if "request_token=" in current_url:
+                    request_token = current_url.split("request_token=")[1].split("&")[0]
+                    print(f"Captured request_token from page URL")
+                    break
+            except Exception:
+                pass
             time.sleep(0.5)
 
         browser.close()
