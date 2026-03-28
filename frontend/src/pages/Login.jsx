@@ -76,9 +76,12 @@ function Login() {
           Welcome back! Please login to your account.
         </p>
         <input
+          type="email"
+          autoCapitalize="none"
+          autoCorrect="off"
           placeholder="Email"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => setEmail(e.target.value.toLowerCase())}
           style={{
             width: '100%',
             padding: 14,

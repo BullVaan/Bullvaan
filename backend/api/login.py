@@ -15,7 +15,7 @@ class LoginRequest(BaseModel):
 
 @router.post("/login")
 def login(request: LoginRequest):
-    result = supabase.table("users").select("id", "email", "is_approved").eq("email", request.email).eq("password", request.password).execute()
+    result = supabase.table("users").select("id", "email", "is_approved").eq("email", request.email.lower().strip()).eq("password", request.password).execute()
     if not result.data:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
