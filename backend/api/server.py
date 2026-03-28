@@ -191,7 +191,11 @@ logging.getLogger('urllib3').setLevel(logging.ERROR)
 # =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # for dev. Later replace with frontend domain
+    allow_origins=[
+        "https://bullvaan.com",
+        "https://www.bullvaan.com",
+        "http://localhost:3000",  # local dev
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
