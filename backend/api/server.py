@@ -170,7 +170,14 @@ from utils import fetch_zerodha_history, fetch_india_vix_zerodha
 from api.login import router as login_router
 from api.signup import router as signup_router
 
-app = FastAPI(title="Bullvan Trading API")
+# Disable public API docs in production for security
+_IS_DEV = os.getenv("ENVIRONMENT", "production").lower() == "development"
+app = FastAPI(
+    title="Bullvan Trading API",
+    docs_url="/docs" if _IS_DEV else None,
+    redoc_url="/redoc" if _IS_DEV else None,
+    openapi_url="/openapi.json" if _IS_DEV else None,
+)
 
 # Register auth routers
 app.include_router(login_router, prefix="/api", tags=["auth"])
