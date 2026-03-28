@@ -17,6 +17,7 @@ function App() {
       <Routes>
         {/* Login page WITHOUT sidebar */}
         <Route path="/" element={<Login />} />
+        <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
 
         {/* All pages WITH sidebar */}
