@@ -1,5 +1,9 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import asyncio
 import json
 import logging
@@ -170,6 +174,9 @@ from utils import fetch_zerodha_history, fetch_india_vix_zerodha
 from api.login import router as login_router
 from api.signup import router as signup_router
 
+# Rate limiter — limits by client IP address
+limiter = Limiter(key_func=get_remote_address)
+
 # Admin email — set ADMIN_EMAIL in your .env / Render environment variables
 _ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").lower().strip()
 
@@ -193,6 +200,13 @@ app = FastAPI(
 # Register auth routers
 app.include_router(login_router, prefix="/api", tags=["auth"])
 app.include_router(signup_router, prefix="/api", tags=["auth"])
+
+# Attach rate limiter to app
+app.state.limiter = limiter
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(status_code=429, content={"detail": "Too many attempts. Please wait and try again."})
 
 # =========================
 # Setup Logging

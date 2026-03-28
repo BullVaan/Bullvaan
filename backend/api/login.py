@@ -1,22 +1,26 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from utils.supabase_client import supabase
 from utils.auth import create_access_token, hash_password, verify_password
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 class LoginRequest(BaseModel):
     email: str
     password: str
 
 @router.post("/login")
-def login(request: LoginRequest):
+@limiter.limit("5/minute")
+def login(request: Request, login_data: LoginRequest):
     # Fetch user by email only — never compare passwords in SQL
-    result = supabase.table("users").select("id", "email", "password", "is_approved").eq("email", request.email.lower().strip()).execute()
+    result = supabase.table("users").select("id", "email", "password", "is_approved").eq("email", login_data.email.lower().strip()).execute()
     if not result.data:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -27,14 +31,14 @@ def login(request: LoginRequest):
     # then immediately re-hash and update in DB so it's secure going forward
     if stored_password.startswith("$2b$") or stored_password.startswith("$2a$"):
         # Already hashed — normal bcrypt verify
-        if not verify_password(request.password, stored_password):
+        if not verify_password(login_data.password, stored_password):
             raise HTTPException(status_code=401, detail="Invalid credentials")
     else:
         # Legacy plaintext password — verify directly
-        if request.password != stored_password:
+        if login_data.password != stored_password:
             raise HTTPException(status_code=401, detail="Invalid credentials")
         # Re-hash and update in DB silently
-        new_hash = hash_password(request.password)
+        new_hash = hash_password(login_data.password)
         supabase.table("users").update({"password": new_hash}).eq("id", user["id"]).execute()
     
     # Check if user is approved by admin
