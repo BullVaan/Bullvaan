@@ -170,6 +170,17 @@ from utils import fetch_zerodha_history, fetch_india_vix_zerodha
 from api.login import router as login_router
 from api.signup import router as signup_router
 
+# Admin email — set ADMIN_EMAIL in your .env / Render environment variables
+_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").lower().strip()
+
+async def admin_required(current_user: dict = Depends(get_current_user)) -> dict:
+    """FastAPI dependency: only allow requests from the configured admin email"""
+    if not _ADMIN_EMAIL:
+        raise HTTPException(status_code=500, detail="Admin email not configured on server")
+    if current_user.get("email", "").lower() != _ADMIN_EMAIL:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
 # Disable public API docs in production for security
 _IS_DEV = os.getenv("ENVIRONMENT", "production").lower() == "development"
 app = FastAPI(
@@ -1517,7 +1528,7 @@ async def ws_nifty50(websocket: WebSocket):
         logger.error(f"Nifty50 WS error: {e}", exc_info=True)
 
 @app.get("/nifty50-movers")
-def nifty50_movers():
+def nifty50_movers(current_user: dict = Depends(get_current_user)):
     data, sector = fetch_nifty50_movers()
 
     if not data:
@@ -2380,7 +2391,7 @@ def delete_kite_credentials(current_user: dict = Depends(get_current_user)):
 # =========================
 
 @app.get("/admin/pending-users")
-def get_pending_users():
+def get_pending_users(current_user: dict = Depends(admin_required)):
     """Get list of pending users awaiting approval
     
     Returns:
@@ -2397,7 +2408,7 @@ def get_pending_users():
 
 
 @app.post("/admin/approve-user/{email}")
-def approve_user(email: str):
+def approve_user(email: str, current_user: dict = Depends(admin_required)):
     """Approve a pending user by email
     
     Args:
@@ -2431,7 +2442,7 @@ def approve_user(email: str):
 
 
 @app.post("/admin/reject-user/{email}")
-def reject_user(email: str):
+def reject_user(email: str, current_user: dict = Depends(admin_required)):
     """Reject/delete a pending user
     
     Args:
@@ -2607,7 +2618,7 @@ def clear_premarket_alerts(symbol: Optional[str] = None):
 # Debug/Testing Endpoints
 # =========================
 @app.get("/debug/premarket-test")
-def debug_premarket_test(symbol: str = "INFY", limit: int = 5):
+def debug_premarket_test(symbol: str = "INFY", limit: int = 5, current_user: dict = Depends(admin_required)):
     """
     Test endpoint to verify premarket signals are working.
     Tests a single stock signal generation.
@@ -2650,7 +2661,7 @@ def debug_premarket_test(symbol: str = "INFY", limit: int = 5):
 
 
 @app.get("/debug/premarket-batch-test")
-def debug_premarket_batch_test(symbols: str = "INFY,TCS,RELIANCE", limit: int = 3):
+def debug_premarket_batch_test(symbols: str = "INFY,TCS,RELIANCE", limit: int = 3, current_user: dict = Depends(admin_required)):
     """
     Test endpoint for batch premarket signals.
     Tests signal generation for multiple stocks.
@@ -2690,7 +2701,7 @@ def debug_premarket_batch_test(symbols: str = "INFY,TCS,RELIANCE", limit: int = 
 
 
 @app.get("/debug/nifty50-list")
-def debug_nifty50_list():
+def debug_nifty50_list(current_user: dict = Depends(admin_required)):
     """
     Get list of all NIFTY50 stocks available for premarket analysis.
     Useful for testing and verification.
@@ -2712,7 +2723,7 @@ def debug_nifty50_list():
 
 
 @app.get("/debug/premarket-health")
-def debug_premarket_health():
+def debug_premarket_health(current_user: dict = Depends(admin_required)):
     """
     Check premarket engine health and dependencies.
     Returns status of all required components.
@@ -2750,7 +2761,7 @@ def debug_premarket_health():
 
 
 @app.get("/next-move")
-def get_next_move():
+def get_next_move(current_user: dict = Depends(get_current_user)):
     """
     NEXT DAY OPENING PREDICTION - End-of-day analysis for overnight positions
     - Only after 15:20 IST: Analyzes FULL-DAY data
