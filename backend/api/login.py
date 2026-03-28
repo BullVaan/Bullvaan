@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from utils.supabase_client import supabase
-from utils.auth import create_access_token
+from utils.auth import create_access_token, hash_password, verify_password
 import os
 from dotenv import load_dotenv
 
@@ -15,11 +15,27 @@ class LoginRequest(BaseModel):
 
 @router.post("/login")
 def login(request: LoginRequest):
-    result = supabase.table("users").select("id", "email", "is_approved").eq("email", request.email.lower().strip()).eq("password", request.password).execute()
+    # Fetch user by email only — never compare passwords in SQL
+    result = supabase.table("users").select("id", "email", "password", "is_approved").eq("email", request.email.lower().strip()).execute()
     if not result.data:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     user = result.data[0]
+    stored_password = user.get("password", "")
+
+    # Seamless migration: if password is still plaintext (legacy), verify directly
+    # then immediately re-hash and update in DB so it's secure going forward
+    if stored_password.startswith("$2b$") or stored_password.startswith("$2a$"):
+        # Already hashed — normal bcrypt verify
+        if not verify_password(request.password, stored_password):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+    else:
+        # Legacy plaintext password — verify directly
+        if request.password != stored_password:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        # Re-hash and update in DB silently
+        new_hash = hash_password(request.password)
+        supabase.table("users").update({"password": new_hash}).eq("id", user["id"]).execute()
     
     # Check if user is approved by admin
     if not user.get("is_approved", False):

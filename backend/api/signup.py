@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from utils.supabase_client import supabase
+from utils.auth import hash_password
 from datetime import datetime
 
 router = APIRouter()
@@ -12,17 +13,17 @@ class SignupRequest(BaseModel):
 @router.post("/signup")
 def signup(request: SignupRequest):
     # Check if email already exists
-    existing = supabase.table("users").select("id").eq("email", request.email).execute()
+    existing = supabase.table("users").select("id").eq("email", request.email.lower().strip()).execute()
     if existing.data:
         raise HTTPException(status_code=400, detail="Email already registered.")
     
-    # Use the password provided by the user (not a random one)
-    password = request.password
+    # Hash the password before storing — never store plaintext
+    hashed = hash_password(request.password)
     
     # Insert user with is_approved = false (requires admin approval)
     result = supabase.table("users").insert({
-        "email": request.email,
-        "password": password,
+        "email": request.email.lower().strip(),
+        "password": hashed,
         "is_approved": False,  # New user is not approved by default
         "created_at": datetime.utcnow().isoformat()
     }).execute()
