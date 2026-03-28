@@ -59,3 +59,7 @@ fix_*.py
 test_api.*
 create_test_*.py
 get_actual_*.py
+
+# Internal docs — sensitive architecture/deployment info (repo is public)
+docs/
+REORGANIZATION_ACTION_PLAN.md
