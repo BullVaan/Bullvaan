@@ -2,7 +2,7 @@
   "mode": "paper",
   "total_capital": 100000,
   "max_daily_loss": 5000,
-  "max_trades_per_day": 10,
+  "max_trades_per_day": 15,
   "max_lots_per_trade": 5,
   "market_open": [9, 20],
   "market_close": [15, 25],
