@@ -1,12 +1,9 @@
-﻿import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import SwingTrade from './pages/SwingTrade';
 import MainLayout from './layout/MainLayout';
-import PublicLayout from './layout/PublicLayout';
-import AboutUs from './pages/AboutUs';
-import ContactUs from './pages/ContactUs';
 import Trades from './pages/Trades';
 import ActiveOrders from './pages/ActiveOrders';
 import History from './pages/History';
@@ -18,18 +15,12 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Standalone pages â€” no app bar */}
+        {/* Login page WITHOUT sidebar */}
         <Route path="/" element={<Login />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
 
-        {/* Public pages â€” app bar + footer, no sidebar */}
-        <Route element={<PublicLayout />}>
-          <Route path="/about" element={<AboutUs />} />
-          <Route path="/contact" element={<ContactUs />} />
-        </Route>
-
-        {/* App pages â€” app bar + sidebar + footer */}
+        {/* All pages WITH sidebar */}
         <Route element={<MainLayout />}>
           <Route
             path="/dashboard"
@@ -93,4 +84,4 @@ function App() {
   );
 }
 
-export default App;
+export default App;
