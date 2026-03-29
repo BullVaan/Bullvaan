@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Save } from 'lucide-react';
 import { getAuthHeaders } from '../utils/auth';
 

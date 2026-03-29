@@ -18,17 +18,21 @@ export default function Footer() {
       </div>
       <div style={{ display: 'flex', gap: 20 }}>
         {['Privacy Policy', 'Terms of Service', 'Support'].map((link) => (
-          <a
+          <button
             key={link}
+            type="button"
             style={{
               fontSize: 12,
               color: '#475569',
               textDecoration: 'none',
-              cursor: 'pointer'
+              cursor: 'pointer',
+              background: 'none',
+              border: 'none',
+              padding: 0
             }}
           >
             {link}
-          </a>
+          </button>
         ))}
       </div>
     </div>
