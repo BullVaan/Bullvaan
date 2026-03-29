@@ -173,7 +173,6 @@ from utils import fetch_zerodha_history, fetch_india_vix_zerodha
 # Import Auth routers (login/signup)
 from api.login import router as login_router
 from api.signup import router as signup_router
-from api.profile import router as profile_router
 
 # Rate limiter — limits by client IP address
 limiter = Limiter(key_func=get_remote_address)
@@ -201,7 +200,6 @@ app = FastAPI(
 # Register auth routers
 app.include_router(login_router, prefix="/api", tags=["auth"])
 app.include_router(signup_router, prefix="/api", tags=["auth"])
-app.include_router(profile_router, prefix="/api", tags=["profile"])
 
 # Attach rate limiter to app
 app.state.limiter = limiter
