@@ -82,7 +82,7 @@ def get_request_token() -> str:
             timeout=15000
         )
         print(f"TOTP page reached: {page.url}")
-        time.sleep(1)
+        time.sleep(0.5)
 
         # Generate TOTP (pad secret to valid base32 length)
         padded_secret = TOTP_SECRET.upper().strip().replace(' ', '').replace('-', '')
@@ -93,40 +93,61 @@ def get_request_token() -> str:
         totp_code = totp.now()
         print(f"Generated TOTP: {totp_code}")
 
-        # Find TOTP input and type digit-by-digit (Zerodha uses individual dot fields)
-        totp_input = (page.query_selector('input[type="number"]') or
-                      page.query_selector('input[placeholder*="TOTP"]') or
-                      page.query_selector('input[placeholder*="OTP"]'))
-        if not totp_input:
-            raise RuntimeError("Could not find TOTP input field")
+        # Zerodha uses 6 INDIVIDUAL digit input boxes — must fill each one separately.
+        # Using query_selector (first only) and typing all digits into it causes
+        # the form to auto-submit after the first digit, sending an invalid TOTP.
+        totp_inputs = page.query_selector_all('input[type="number"]')
+        print(f"Found {len(totp_inputs)} number input(s) on TOTP page")
 
-        totp_input.click()
-        for digit in totp_code:
-            totp_input.type(digit, delay=100)
-        print("Typed TOTP digits")
+        if len(totp_inputs) >= 6:
+            # Individual digit boxes — fill each with one digit
+            for i, digit in enumerate(totp_code):
+                totp_inputs[i].click()
+                totp_inputs[i].fill(digit)
+                time.sleep(0.08)
+            print("Filled 6 individual TOTP digit boxes")
+        elif len(totp_inputs) == 1:
+            # Single combined input field
+            totp_inputs[0].click()
+            totp_inputs[0].fill(totp_code)
+            print("Filled single TOTP input")
+        else:
+            # Fallback: try other selectors
+            totp_input = (
+                page.query_selector('input[placeholder*="TOTP"]') or
+                page.query_selector('input[placeholder*="OTP"]') or
+                page.query_selector('input[autocomplete="one-time-code"]')
+            )
+            if not totp_input:
+                raise RuntimeError("Could not find TOTP input field")
+            totp_input.click()
+            totp_input.fill(totp_code)
+            print("Filled TOTP via fallback selector")
+
         page.screenshot(path="/tmp/zerodha_debug_screenshot.png")
         print("Screenshot saved to /tmp/zerodha_debug_screenshot.png")
-        if totp_input.evaluate("el => el.value.length") < 6:
-            raise RuntimeError("TOTP input incomplete")
 
-        # Click the Continue / Submit button
+        # Zerodha auto-submits when all 6 digit boxes are filled.
+        # Only click submit manually if not already redirected.
         time.sleep(0.5)
-        try:
-            submit_btn = (page.query_selector('button[type="submit"]') or
-                          page.query_selector('button:has-text("Continue")') or
-                          page.query_selector('button:has-text("Login")'))
-            if submit_btn:
-                submit_btn.click()
-                print("Clicked submit button")
-        except Exception as e:
-            print(f"Submit click failed (may auto-submit): {e}")
+        if "request_token=" not in page.url:
+            try:
+                submit_btn = (
+                    page.query_selector('button[type="submit"]') or
+                    page.query_selector('button:has-text("Continue")') or
+                    page.query_selector('button:has-text("Login")')
+                )
+                if submit_btn:
+                    submit_btn.click()
+                    print("Clicked submit button")
+            except Exception as e:
+                print(f"Submit click note (may have auto-submitted): {e}")
 
-        # Wait up to 30s for request_token to appear in any request URL
+        # Wait up to 30s for request_token to appear (via on_request handler or URL)
         for i in range(60):
             if request_token:
                 break
             time.sleep(0.5)
-            # Also check current page URL
             try:
                 current = page.url
                 if "request_token=" in current:
