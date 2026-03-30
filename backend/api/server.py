@@ -1,3 +1,8 @@
+from dotenv import load_dotenv
+# Load environment variables FIRST — before any other imports that read env vars at module level
+# (e.g. utils/auth.py reads ENCRYPTION_KEY and JWT_SECRET at import time)
+load_dotenv()
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -11,7 +16,6 @@ import os
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from dotenv import load_dotenv
 from kiteconnect import KiteConnect, KiteTicker
 from utils.nse_live import fetch_nse_indices
 from utils.auth import get_current_user
@@ -29,15 +33,16 @@ with open(_CONFIG_FILE, 'r') as f:
 from engine.premarket_alerts import PremarketAlertManager, AlertSeverity
 from utils.nifty50_stocks import get_nifty50_symbols
 
-# Load environment variables
-load_dotenv()
-
 # ========== MULTI-SESSION AUTO-TRADER TRACKING ==========
 # Each session (user/browser/device) gets its own independent AutoTrader instance
 # Format: {session_id: (AutoTrader_instance, user_id, timestamp), ...}
 # This allows multiple concurrent traders to run simultaneously
 _auto_traders_by_session = {}
 _auto_traders_lock = threading.Lock()  # Protect dict during concurrent access
+
+# Persist user's chosen trading mode across start/stop cycles
+# Format: {user_id: "paper" | "real"}
+_user_preferred_mode = {}
 
 # Get references to load_trades and save_trades
 _load_trades = auto_trader_module._load_trades
@@ -2135,7 +2140,19 @@ async def auto_trader_start(current_user: dict = Depends(get_current_user)):
                 kite=auto_trader.kite,
                 user_id=user_id  # Pass user_id for multi-session support
             )
-            
+
+            # Restore the user's previously chosen trading mode (paper or real)
+            preferred_mode = _user_preferred_mode.get(user_id, "paper")
+            if preferred_mode == "real":
+                mode_result = new_trader.set_trading_mode("real")
+                if mode_result.get("status") != "ok":
+                    # Credentials invalid/expired — fall back to paper and warn
+                    logger.warning(
+                        f"Cannot restore real mode for user {user_id}: {mode_result.get('message')} — starting in paper mode"
+                    )
+                    preferred_mode = "paper"
+                    _user_preferred_mode[user_id] = "paper"
+
             # Store this session's trader
             import time
             _auto_traders_by_session[session_id] = (new_trader, user_id, time.time())
@@ -2146,13 +2163,13 @@ async def auto_trader_start(current_user: dict = Depends(get_current_user)):
             # Start the trader
             loop = asyncio.get_running_loop()
             new_trader.start(loop=loop)
-            logger.info(f"Auto-trader started for session {session_id} (user {user_id})")
+            logger.info(f"Auto-trader started for session {session_id} (user {user_id}) in {preferred_mode} mode")
             
             return {
                 "status": "started",
                 "session_id": session_id,
                 "user_id": user_id,
-                "mode": "paper",
+                "mode": preferred_mode,
                 "active_sessions": len(_auto_traders_by_session)
             }
     except Exception as e:
@@ -2232,11 +2249,14 @@ async def auto_trader_set_mode(body: dict = Body(...), current_user: dict = Depe
                 trader, stored_uid, ts = _auto_traders_by_session[session_id]
                 if stored_uid == user_id:
                     result = trader.set_trading_mode(mode)
+                    if result.get("status") == "ok":
+                        _user_preferred_mode[user_id] = mode  # persist for next start
                     return result
 
         # No running session trader (user stopped before switching — normal flow).
         # For paper mode, just confirm — no Kite needed.
         if mode == "paper":
+            _user_preferred_mode[user_id] = "paper"
             return {"status": "ok", "message": "Switched to paper mode", "trading_mode": "paper"}
 
         # For real mode: fetch balance using the user's own Kite credentials.
@@ -2262,6 +2282,7 @@ async def auto_trader_set_mode(body: dict = Body(...), current_user: dict = Depe
                         or avail_dict.get("opening_balance")
                         or avail_dict.get("cash", 0)
                     )
+                _user_preferred_mode[user_id] = "real"  # persist for next start
                 return {
                     "status": "ok",
                     "message": "Switched to real mode",
