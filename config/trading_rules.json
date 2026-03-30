@@ -9,9 +9,9 @@
   "eod_exit": [15, 20],
   "index_priority": ["^NSEI", "^NSEBANK", "^BSESN"],
   "lot_sizes": {
-    "NIFTY": 130,
+    "NIFTY": 65,
     "BANKNIFTY": 30,
-    "SENSEX": 60
+    "SENSEX": 20
   },
   "signal_rules": {
     "NIFTY": {
