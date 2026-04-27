@@ -41,45 +41,6 @@ export default function AppBar() {
         zIndex: 100
       }}
     >
-      {/* Brand */}
-      <div
-        onClick={() => navigate(homeTarget)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          cursor: 'pointer'
-        }}
-      >
-        <div
-          style={{
-            width: 34,
-            height: 34,
-            borderRadius: 8,
-            background: 'linear-gradient(135deg, #2563eb, #38bdf8)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 900,
-            fontSize: 18,
-            color: '#fff'
-          }}
-        >
-          B
-        </div>
-        <span
-          style={{
-            fontSize: 20,
-            fontWeight: 800,
-            background: 'linear-gradient(90deg, #38bdf8, #ffffff)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent'
-          }}
-        >
-          BullVaan
-        </span>
-      </div>
-
       {/* Nav links */}
       <nav style={{ display: 'flex', gap: 4, marginLeft: 28 }}>
         {navLinks.map(({ label, path }) => {
