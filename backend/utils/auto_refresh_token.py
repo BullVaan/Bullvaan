@@ -235,7 +235,10 @@ def generate_access_token(request_token: str) -> str:
 
 
 def get_current_render_env_vars() -> list:
-    """Fetch all current env vars from Render service."""
+    """Fetch all current env vars from Render service.
+    Render API returns: [{"envVar": {"key": ..., "value": ...}}, ...]
+    We normalise to flat: [{"key": ..., "value": ...}, ...]
+    """
     url = f"https://api.render.com/v1/services/{RENDER_SERVICE_ID}/env-vars"
     headers = {
         "Authorization": f"Bearer {RENDER_API_KEY}",
@@ -243,7 +246,15 @@ def get_current_render_env_vars() -> list:
     }
     resp = requests.get(url, headers=headers, timeout=15)
     resp.raise_for_status()
-    return resp.json()  # list of {"key": ..., "value": ...}
+    raw = resp.json()
+    # Normalise both possible shapes
+    result = []
+    for item in raw:
+        if "envVar" in item:
+            result.append({"key": item["envVar"]["key"], "value": item["envVar"]["value"]})
+        elif "key" in item:
+            result.append({"key": item["key"], "value": item["value"]})
+    return result
 
 
 def update_render_access_token(new_token: str):
