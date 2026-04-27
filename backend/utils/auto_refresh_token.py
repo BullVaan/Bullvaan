@@ -21,6 +21,8 @@ import requests
 from kiteconnect import KiteConnect
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
+DEBUG_DIR = "/tmp"
+
 # ── Config from env ──────────────────────────────────────────────────────────
 USER_ID       = os.environ["ZERODHA_USER_ID"]
 PASSWORD      = os.environ["ZERODHA_PASSWORD"]
@@ -31,6 +33,79 @@ RENDER_API_KEY     = os.environ["RENDER_API_KEY"]
 RENDER_SERVICE_ID  = os.environ["RENDER_SERVICE_ID"]
 
 REDIRECT_URL = "https://127.0.0.1"  # Must match what you set in Kite Connect app settings
+
+
+# ── Debug helpers ────────────────────────────────────────────────────────────
+
+def _save_debug(page, label: str):
+    """Save a screenshot and the full page HTML for a given step."""
+    try:
+        page.screenshot(path=f"{DEBUG_DIR}/zerodha_{label}.png")
+        html = page.content()
+        with open(f"{DEBUG_DIR}/zerodha_{label}.html", "w", encoding="utf-8") as f:
+            f.write(html)
+        print(f"[debug] Saved screenshot + HTML: {DEBUG_DIR}/zerodha_{label}.*")
+
+        # Log all visible inputs so we can confirm selectors
+        inputs = page.query_selector_all("input")
+        for idx, inp in enumerate(inputs):
+            try:
+                itype  = inp.get_attribute("type") or "text"
+                iid    = inp.get_attribute("id") or ""
+                iname  = inp.get_attribute("name") or ""
+                iplace = inp.get_attribute("placeholder") or ""
+                iauto  = inp.get_attribute("autocomplete") or ""
+                print(f"  input[{idx}] type={itype!r} id={iid!r} name={iname!r} placeholder={iplace!r} autocomplete={iauto!r}")
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[debug] Could not save debug files: {e}")
+
+
+def _fill_totp(page, totp_code: str):
+    """
+    Fill the TOTP code on the Zerodha 2FA screen.
+    Handles both:
+      - 6 individual digit boxes  (type=number, older UI)
+      - Single External TOTP field (type=text/password, newer UI)
+    """
+    number_inputs = page.query_selector_all('input[type="number"]')
+    print(f"Found {len(number_inputs)} number input(s)")
+
+    if len(number_inputs) >= 6:
+        # Older UI: 6 separate digit boxes
+        for i, digit in enumerate(totp_code):
+            number_inputs[i].click()
+            number_inputs[i].fill(digit)
+            time.sleep(0.1)
+        print("Filled 6 individual TOTP digit boxes")
+        return
+
+    if len(number_inputs) == 1:
+        number_inputs[0].triple_click()
+        number_inputs[0].fill(totp_code)
+        print("Filled single number TOTP input")
+        return
+
+    # Newer Zerodha UI: single text input for External TOTP
+    single = (
+        page.query_selector('input[autocomplete="one-time-code"]') or
+        page.query_selector('input[id*="totp" i]') or
+        page.query_selector('input[name*="totp" i]') or
+        page.query_selector('input[placeholder*="TOTP" i]') or
+        page.query_selector('input[placeholder*="OTP" i]') or
+        page.query_selector('input[type="text"]') or
+        page.query_selector('input[type="password"]') or
+        page.query_selector('input')  # absolute last resort: first input on page
+    )
+
+    if single:
+        single.triple_click()   # clear any existing value first
+        single.fill(totp_code)
+        print(f"Filled TOTP via selector: {single.get_attribute('type')!r} id={single.get_attribute('id')!r}")
+    else:
+        page.keyboard.type(totp_code)
+        print("Typed TOTP via keyboard (no input found)")
 
 
 def get_request_token() -> str:
@@ -69,6 +144,7 @@ def get_request_token() -> str:
         # Navigate to Zerodha login
         page.goto(login_url, wait_until="networkidle", timeout=30000)
         print(f"Page after goto: {page.url}")
+        _save_debug(page, "01_login_page")
 
         # Fill user ID and password
         page.fill('input[type="text"]', USER_ID)
@@ -76,60 +152,37 @@ def get_request_token() -> str:
         page.click('button[type="submit"]')
         print("Submitted login form")
 
-        # Wait for TOTP screen
+        # Wait for TOTP screen — Zerodha uses either individual digit boxes or
+        # a single "External TOTP" text/number input depending on account settings.
         page.wait_for_selector(
-            'input[type="number"], input[placeholder*="TOTP"], input[placeholder*="OTP"]',
+            'input[type="number"], input[type="text"], input[placeholder*="TOTP"], input[placeholder*="OTP"], input[autocomplete="one-time-code"]',
             timeout=15000
         )
         print(f"TOTP page reached: {page.url}")
-        time.sleep(0.5)
+        _save_debug(page, "02_totp_page")  # saves screenshot + HTML for inspection
 
-        # Generate TOTP (pad secret to valid base32 length)
+        # Build and validate the TOTP secret
         padded_secret = TOTP_SECRET.upper().strip().replace(' ', '').replace('-', '')
         padded_secret += '=' * (-len(padded_secret) % 8)
+        totp_obj = pyotp.TOTP(padded_secret)
 
-        # Generate fresh TOTP right before typing to avoid 30s window expiry
-        totp = pyotp.TOTP(padded_secret)
-        totp_code = totp.now()
-        print(f"Generated TOTP: {totp_code}")
+        # Generate TOTP as close to submission as possible.
+        # If we are in the last 3 seconds of the 30s window, wait for the next
+        # window so we never submit a code that expires mid-flight.
+        remaining = 30 - (int(time.time()) % 30)
+        if remaining <= 3:
+            print(f"TOTP window expires in {remaining}s — waiting for next window...")
+            time.sleep(remaining + 1)
 
-        # Zerodha uses 6 INDIVIDUAL digit input boxes — must fill each one separately.
-        # Using query_selector (first only) and typing all digits into it causes
-        # the form to auto-submit after the first digit, sending an invalid TOTP.
-        totp_inputs = page.query_selector_all('input[type="number"]')
-        print(f"Found {len(totp_inputs)} number input(s) on TOTP page")
+        totp_code = totp_obj.now()
+        print(f"Generated TOTP (first 2 digits): {totp_code[:2]}****  (window remaining: {30 - (int(time.time()) % 30)}s)")
 
-        if len(totp_inputs) >= 6:
-            # Individual digit boxes — fill each with one digit
-            for i, digit in enumerate(totp_code):
-                totp_inputs[i].click()
-                totp_inputs[i].fill(digit)
-                time.sleep(0.08)
-            print("Filled 6 individual TOTP digit boxes")
-        elif len(totp_inputs) == 1:
-            # Single combined input field
-            totp_inputs[0].click()
-            totp_inputs[0].fill(totp_code)
-            print("Filled single TOTP input")
-        else:
-            # Fallback: try other selectors
-            totp_input = (
-                page.query_selector('input[placeholder*="TOTP"]') or
-                page.query_selector('input[placeholder*="OTP"]') or
-                page.query_selector('input[autocomplete="one-time-code"]')
-            )
-            if not totp_input:
-                raise RuntimeError("Could not find TOTP input field")
-            totp_input.click()
-            totp_input.fill(totp_code)
-            print("Filled TOTP via fallback selector")
-
-        page.screenshot(path="/tmp/zerodha_debug_screenshot.png")
-        print("Screenshot saved to /tmp/zerodha_debug_screenshot.png")
+        _fill_totp(page, totp_code)
+        _save_debug(page, "03_after_totp_fill")
 
         # Zerodha auto-submits when all 6 digit boxes are filled.
         # Only click submit manually if not already redirected.
-        time.sleep(0.5)
+        time.sleep(1.0)
         if "request_token=" not in page.url:
             try:
                 submit_btn = (
@@ -161,13 +214,9 @@ def get_request_token() -> str:
 
         # Save screenshot for debugging if token not found
         if not request_token:
-            try:
-                page.screenshot(path="/tmp/zerodha_debug.png")
-                print("Screenshot saved to /tmp/zerodha_debug.png")
-                print(f"Final page URL: {page.url}")
-                print(f"Final page title: {page.title()}")
-            except Exception as e:
-                print(f"Screenshot failed: {e}")
+            _save_debug(page, "04_final_state")
+            print(f"Final page URL: {page.url}")
+            print(f"Final page title: {page.title()}")
 
         browser.close()
 
