@@ -82,7 +82,7 @@ def _fill_totp(page, totp_code: str):
         return
 
     if len(number_inputs) == 1:
-        number_inputs[0].triple_click()
+        number_inputs[0].click(click_count=3)
         number_inputs[0].fill(totp_code)
         print("Filled single number TOTP input")
         return
@@ -100,7 +100,7 @@ def _fill_totp(page, totp_code: str):
     )
 
     if single:
-        single.triple_click()   # clear any existing value first
+        single.click(click_count=3)  # triple-click to select all, then overwrite
         single.fill(totp_code)
         print(f"Filled TOTP via selector: {single.get_attribute('type')!r} id={single.get_attribute('id')!r}")
     else:
@@ -152,12 +152,11 @@ def get_request_token() -> str:
         page.click('button[type="submit"]')
         print("Submitted login form")
 
-        # Wait for TOTP screen — Zerodha uses either individual digit boxes or
-        # a single "External TOTP" text/number input depending on account settings.
-        page.wait_for_selector(
-            'input[type="number"], input[type="text"], input[placeholder*="TOTP"], input[placeholder*="OTP"], input[autocomplete="one-time-code"]',
-            timeout=15000
-        )
+        # Wait for the login API to respond, then for the password field to
+        # disappear — that signals the page has transitioned to the TOTP screen.
+        page.wait_for_selector('input[type="password"]', state="hidden", timeout=15000)
+        # Now wait for ANY input to appear on the TOTP page
+        page.wait_for_selector('input', timeout=10000)
         print(f"TOTP page reached: {page.url}")
         _save_debug(page, "02_totp_page")  # saves screenshot + HTML for inspection
 
