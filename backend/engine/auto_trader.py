@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from kiteconnect import KiteConnect
 
 from strategies.strategy_9_adx import ADXStrategy
+from strategies.strategy_13_key_level import KeyLevelStrategy
 from utils.auto_trader_db import (
     set_auto_trader_user_id, clear_auto_trader_user_id, get_auto_trader_user_id,
     load_trades_for_autotrader, save_auto_trade, update_auto_trade_sell, delete_auto_trade
@@ -53,7 +54,9 @@ MARKET_OPEN = tuple(_config["market_open"])
 MARKET_CLOSE = tuple(_config["market_close"])
 EOD_EXIT = tuple(_config["eod_exit"])
 TEST_MODE = _config.get("test_mode", False)
-ADX_THRESHOLD = _config.get("adx_threshold", 25)
+AVOID_FIRST_MINUTES = _config.get("avoid_first_minutes", 15)
+AVOID_LAST_MINUTES = _config.get("avoid_last_minutes", 30)
+
 
 def _get_signal_rule(index_name, signal_strength):
     """Get SL/TP rule for specific index and signal strength"""
@@ -77,7 +80,20 @@ def _ist_time_tuple():
     return (now.hour, now.minute)
 
 
-def _is_market_hours():
+def _is_safe_entry_time():
+    """Avoid the first 15 min (9:15-9:30) and last 30 min (3:00-3:30) of the session.
+    These windows have high volatility and unpredictable price swings."""
+    if TEST_MODE:
+        return True
+    now = _ist_now()
+    minutes_since_open = (now.hour - 9) * 60 + (now.minute - 15)
+    minutes_to_close = (15 * 60 + 30) - (now.hour * 60 + now.minute)
+    if minutes_since_open < AVOID_FIRST_MINUTES:
+        return False
+    if minutes_to_close < AVOID_LAST_MINUTES:
+        return False
+    return True
+
     if TEST_MODE:
         return True
     h, m = _ist_time_tuple()
@@ -335,7 +351,36 @@ class AutoTrader:
             logger.error(f"Error checking ADX trend for {prefix}: {e}")
             return True  # Allow trade on error (fail-safe)
 
-    # ─── Real Trading Functions ────────────────────
+    def _is_near_key_level(self, prefix, consensus):
+        """Check if current price is near a key level (PDH/PDL/round number).
+        Only allows entries when price is near a high-probability reaction zone."""
+        try:
+            if not self.get_candles:
+                return True  # Can't check — allow trade
+
+            df = self.get_candles(prefix, "5minute", count=120)  # ~2 trading sessions
+            if df is None or len(df) < 10:
+                logger.warning(f"Not enough candles for {prefix} key level check")
+                return True  # Allow trade if insufficient data
+
+            key_level_strategy = KeyLevelStrategy(proximity_pts=30)
+            signal = key_level_strategy.calculate(df)
+
+            if signal == "NEUTRAL":
+                logger.info(f"KEY LEVEL: {prefix} price is mid-range (not near any key level) → BLOCKED")
+                return False
+
+            # Signal direction should match consensus
+            if signal != consensus:
+                logger.info(f"KEY LEVEL: {prefix} near key level but direction mismatch "
+                            f"(key={signal}, consensus={consensus}) → BLOCKED")
+                return False
+
+            logger.info(f"KEY LEVEL: {prefix} price near key level, direction={signal} → ALLOWED")
+            return True
+        except Exception as e:
+            logger.error(f"Error checking key level for {prefix}: {e}")
+            return True  # Allow trade on error (fail-safe)
 
     def _get_kite_account_balance(self):
         """Fetch available margin from user's own Kite account (cached for 1 min).
@@ -739,10 +784,21 @@ class AutoTrader:
                     self._pending_entries.pop(prefix, None)  # clear stale pending
                     continue
 
+                # ── TIME FILTER: avoid noisy open and close windows ──
+                if not _is_safe_entry_time():
+                    logger.info(f"ENTRY BLOCKED: {prefix} outside safe entry window (first {AVOID_FIRST_MINUTES}min / last {AVOID_LAST_MINUTES}min)")
+                    continue
+
                 # ── ADX FILTER: Skip entry during consolidation (ADX < 25) ──
                 # ADX < 25 means weak/consolidating market — trade has poor odds
                 if not self._is_trend_strong(prefix):
                     logger.info(f"ENTRY BLOCKED: {prefix} consolidation detected (ADX < {ADX_THRESHOLD}) → waiting for trend")
+                    continue
+
+                # ── KEY LEVEL FILTER: only enter near PDH/PDL/round numbers ──
+                # Mid-range signals have poor odds — wait for price to reach a level
+                if not self._is_near_key_level(prefix, consensus):
+                    logger.info(f"ENTRY BLOCKED: {prefix} price not near key level → waiting")
                     continue
 
                 # Get rule for this signal strength (index-specific)

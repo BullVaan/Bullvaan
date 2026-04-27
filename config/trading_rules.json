@@ -1,64 +1,67 @@
 {
   "mode": "paper",
   "total_capital": 100000,
-  "max_daily_loss": 5000,
-  "max_trades_per_day": 15,
-  "max_lots_per_trade": 5,
+  "max_daily_loss": 3000,
+  "max_trades_per_day": 8,
+  "max_lots_per_trade": 2,
   "market_open": [9, 20],
   "market_close": [15, 25],
-  "eod_exit": [15, 20],
+  "eod_exit": [15, 0],
+  "avoid_first_minutes": 15,
+  "avoid_last_minutes": 30,
   "index_priority": ["^NSEI", "^NSEBANK", "^BSESN"],
   "lot_sizes": {
     "NIFTY": 65,
     "BANKNIFTY": 30,
     "SENSEX": 20
   },
+  "min_strategies_agreement": 3,
   "signal_rules": {
     "NIFTY": {
       "STRONG": {
-        "target_pts": 20,
+        "target_pts": 40,
         "sl_pts": 15,
-        "allow_reentry": true,
-        "cooldown_minutes": 3
+        "allow_reentry": false,
+        "cooldown_minutes": 15
       },
       "MEDIUM": {
-        "target_pts": 18,
-        "sl_pts": 10,
-        "allow_reentry": true,
-        "cooldown_minutes": 3
+        "target_pts": 30,
+        "sl_pts": 12,
+        "allow_reentry": false,
+        "cooldown_minutes": 15
       }
     },
     "BANKNIFTY": {
       "STRONG": {
-        "target_pts": 40,
-        "sl_pts": 20,
-        "allow_reentry": true,
-        "cooldown_minutes": 3
+        "target_pts": 80,
+        "sl_pts": 30,
+        "allow_reentry": false,
+        "cooldown_minutes": 15
       },
       "MEDIUM": {
-        "target_pts": 20,
-        "sl_pts": 15,
-        "allow_reentry": true,
-        "cooldown_minutes": 3
+        "target_pts": 60,
+        "sl_pts": 25,
+        "allow_reentry": false,
+        "cooldown_minutes": 15
       }
     },
     "SENSEX": {
       "STRONG": {
-        "target_pts": 30,
-        "sl_pts": 10,
-        "allow_reentry": true,
-        "cooldown_minutes": 3
+        "target_pts": 60,
+        "sl_pts": 20,
+        "allow_reentry": false,
+        "cooldown_minutes": 15
       },
       "MEDIUM": {
-        "target_pts": 20,
-        "sl_pts": 10,
-        "allow_reentry": true,
-        "cooldown_minutes": 3
+        "target_pts": 40,
+        "sl_pts": 15,
+        "allow_reentry": false,
+        "cooldown_minutes": 15
       }
     }
   },
   "adx_threshold": 25,
-  "sl_cooldown_minutes": 5,
+  "sl_cooldown_minutes": 15,
   "neutral_cooldown_minutes": 5,
   "test_mode": false
 }

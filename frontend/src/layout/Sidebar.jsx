@@ -8,7 +8,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Landmark,
-  ListOrderedIcon
+  ListOrderedIcon,
+  FlaskConical
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -31,6 +32,11 @@ export default function Sidebar() {
       name: 'Stock Screener',
       path: '/swing-trade',
       icon: <Landmark size={24} />
+    },
+    {
+      name: 'Strategies',
+      path: '/strategies',
+      icon: <FlaskConical size={24} />
     },
     {
       name: 'Charting',

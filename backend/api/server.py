@@ -169,7 +169,8 @@ async def wait_for_tick(timeout=2):
 # strategies
 from strategies import (
     MovingAverageStrategy, RSIStrategy, MACDStrategy,
-    EMACrossoverStrategy, SupertrendStrategy, StochasticStrategy, ADXStrategy
+    EMACrossoverStrategy, SupertrendStrategy, StochasticStrategy, ADXStrategy,
+    BollingerBandsStrategy, VWAPStrategy, PriceActionStrategy, KeyLevelStrategy
 )
 
 # data utils — Zerodha for strategies (replaced Yahoo Finance)
@@ -365,11 +366,15 @@ SUPPORTED_INDICES = {
 strategies = [
     MovingAverageStrategy(5),           # Fast trend (5 candles)
     RSIStrategy(7, 35, 65),             # Fast momentum (7 period)
-    MACDStrategy(5, 13, 1),             # Already optimized for scalping
+    MACDStrategy(5, 13, 1),             # Optimized for scalping
     EMACrossoverStrategy(5, 13),        # Fast EMA crossover
     SupertrendStrategy(7, 2),           # Tight ATR for quick exits
     StochasticStrategy(5, 3, 3),        # Fast overbought/oversold
-    ADXStrategy(14, 25),                # Trend strength filter
+    ADXStrategy(14, 25),                # Trend strength + direction
+    BollingerBandsStrategy(20, 2),      # Breakout / range detection
+    VWAPStrategy(band_pct=0.001),       # Institutional price level
+    PriceActionStrategy(),              # Candle patterns (hammer, engulfing, star)
+    KeyLevelStrategy(proximity_pts=30), # Near prev day H/L or round number
 ]
 
 NIFTY50_SYMBOLS = [
@@ -397,9 +402,10 @@ SECTOR_MAP = {
 # Strategy Roles (Group by Purpose) - SCALPING CONFIG
 # =========================
 STRATEGY_ROLES = {
-    "Trend": ["MA(5)", "EMA(5,13)"],
-    "Momentum": ["RSI(7)", "MACD(5,13,1)", "Stoch(5,3,3)"],
-    "Strength": ["Supertrend(7,2)", "ADX(14)"]
+    "Trend":      ["VWAP", "EMA(5,13)"],
+    "Momentum":   ["RSI(7)", "MACD(5,13,1)", "Stoch(5,3,3)"],
+    "Strength":   ["Supertrend(7,2)", "ADX(14)"],
+    "Structure":  ["MA(5)", "BB(20,2)", "PriceAction", "KeyLevel"],
 }
 
 # =========================
@@ -722,6 +728,7 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m", current_user: dict
         trend_signals = [s["signal"] for s in signals_by_role.get("Trend", [])]
         strength_signals = [s["signal"] for s in signals_by_role.get("Strength", [])]
         momentum_signals = [s["signal"] for s in signals_by_role.get("Momentum", [])]
+        structure_signals = [s["signal"] for s in signals_by_role.get("Structure", [])]
 
         def category_consensus(signals):
             """
@@ -748,11 +755,16 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m", current_user: dict
         trend_dir = category_consensus(trend_signals)
         momentum_dir = category_consensus(momentum_signals)
         strength_dir = category_consensus(strength_signals)
+        structure_dir = category_consensus(structure_signals)
 
         # ═══════════════════════════════════════════════════════
-        # OVERALL CONSENSUS: Trend & Strength must agree
-        # Momentum must be NEUTRAL or same direction.
-        # Anything else → NEUTRAL.
+        # OVERALL CONSENSUS:
+        # Core: Trend (VWAP + EMA) & Strength must agree.
+        # Momentum must be same or NEUTRAL.
+        # Structure (MA5 + BB + PriceAction) acts as a booster:
+        #   - All 4 agree → STRONG+
+        #   - 3 agree → STRONG
+        #   - 2 agree → MEDIUM
         # ═══════════════════════════════════════════════════════
 
         consensus = "NEUTRAL"
@@ -761,14 +773,18 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m", current_user: dict
         # Trend and Strength must both have the same active direction
         if trend_dir in ("BUY", "SELL") and trend_dir == strength_dir:
             # Momentum must agree or stay neutral
-            if momentum_dir == trend_dir:
-                # All 3 agree → STRONG
+            if momentum_dir == trend_dir or momentum_dir == "NEUTRAL":
                 consensus = trend_dir
-                signal_strength = "STRONG"
-            elif momentum_dir == "NEUTRAL":
-                # Trend + Strength agree, Momentum neutral → MEDIUM
-                consensus = trend_dir
-                signal_strength = "MEDIUM"
+                # Boost signal_strength when Structure confirms
+                structure_confirms = structure_dir == trend_dir
+                if momentum_dir == trend_dir and structure_confirms:
+                    signal_strength = "STRONG"   # All 4 categories agree
+                elif momentum_dir == trend_dir:
+                    signal_strength = "STRONG"   # Trend+Strength+Momentum agree
+                elif structure_confirms:
+                    signal_strength = "MEDIUM"   # Trend+Strength+Structure, Momentum neutral
+                else:
+                    signal_strength = "MEDIUM"   # Trend+Strength only
             # else: Momentum opposes → NEUTRAL
 
         result = {
@@ -814,6 +830,170 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m", current_user: dict
             "message": str(e),
             "symbol": symbol
         }
+
+
+# =========================
+# Strategy Signal Logger (background task — runs every 5 min during market hours)
+# Logs each strategy's individual signal to Supabase for 7-day history tracking.
+# Supabase table required:
+#   CREATE TABLE strategy_signals_log (
+#     id          bigserial PRIMARY KEY,
+#     logged_at   timestamptz DEFAULT now(),
+#     index_key   text,          -- e.g. "^NSEI"
+#     index_name  text,          -- e.g. "NIFTY 50"
+#     strategy    text,          -- e.g. "RSI(7)"
+#     signal      text,          -- BUY / SELL / NEUTRAL
+#     price       numeric,
+#     consensus   text,          -- overall consensus at that moment
+#     timeframe   text DEFAULT '5m'
+#   );
+# =========================
+
+_last_signal_log_time = {}  # {index_key: datetime}
+
+async def _log_strategy_signals_task():
+    """Background task: every 5 min during market hours, fetch signals for all
+    3 indices and write individual strategy rows to strategy_signals_log."""
+    await asyncio.sleep(30)  # Wait for server to fully start
+    while True:
+        try:
+            from datetime import datetime, timedelta
+            now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+            h, m = now_ist.hour, now_ist.minute
+            is_market = (h > 9 or (h == 9 and m >= 15)) and (h < 15 or (h == 15 and m <= 30))
+
+            if is_market:
+                for sym, name in SUPPORTED_INDICES.items():
+                    try:
+                        sig = get_signals(symbol=sym, timeframe="5m", current_user={"role": "admin"})
+                        if not sig or "error" in sig:
+                            continue
+                        price = sig.get("price", 0)
+                        consensus = sig.get("consensus", "NEUTRAL")
+                        rows = [
+                            {
+                                "index_key": sym,
+                                "index_name": name,
+                                "strategy": s["name"],
+                                "signal": s["signal"],
+                                "price": float(price),
+                                "consensus": consensus,
+                                "timeframe": "5m",
+                            }
+                            for s in sig.get("signals", [])
+                        ]
+                        if rows:
+                            from utils.supabase_client import supabase
+                            supabase.table("strategy_signals_log").insert(rows).execute()
+                            logger.info(f"Logged {len(rows)} strategy signals for {name}")
+                    except Exception as e:
+                        logger.warning(f"Strategy signal log error for {sym}: {e}")
+        except Exception as e:
+            logger.warning(f"Strategy signal logger outer error: {e}")
+        await asyncio.sleep(300)  # Every 5 minutes
+
+async def _fill_outcomes_task():
+    """Every 5 min, find rows logged 15+ min ago with no outcome and fill them.
+    Compares logged price vs current price to determine CORRECT / WRONG / NEUTRAL_SKIP.
+    """
+    await asyncio.sleep(90)  # Offset from the logger task
+    while True:
+        try:
+            from utils.supabase_client import supabase
+            from datetime import datetime, timedelta
+
+            now_utc = datetime.utcnow()
+            cutoff = (now_utc - timedelta(minutes=15)).isoformat()
+
+            # Find rows logged 15+ min ago that still have no outcome
+            resp = (
+                supabase.table("strategy_signals_log")
+                .select("id, index_key, signal, price")
+                .is_("outcome", "null")
+                .lte("logged_at", cutoff)
+                .execute()
+            )
+            rows = resp.data or []
+
+            if rows:
+                # Fetch current price once per unique index
+                prices = {}
+                for sym in set(r["index_key"] for r in rows):
+                    try:
+                        sig = get_signals(
+                            symbol=sym, timeframe="5m",
+                            current_user={"role": "admin"}
+                        )
+                        if sig and "price" in sig:
+                            prices[sym] = float(sig["price"])
+                    except Exception:
+                        pass
+
+                now_iso = now_utc.isoformat()
+                filled = 0
+                for row in rows:
+                    cur_price = prices.get(row["index_key"])
+                    if cur_price is None:
+                        continue
+                    logged_price = float(row.get("price") or 0)
+                    if logged_price == 0:
+                        continue
+                    pct = round((cur_price - logged_price) / logged_price * 100, 4)
+                    signal = row["signal"]
+                    if signal == "BUY":
+                        outcome = "CORRECT" if pct > 0 else "WRONG"
+                    elif signal == "SELL":
+                        outcome = "CORRECT" if pct < 0 else "WRONG"
+                    else:
+                        outcome = "NEUTRAL_SKIP"
+
+                    supabase.table("strategy_signals_log").update({
+                        "outcome": outcome,
+                        "outcome_price": cur_price,
+                        "outcome_at": now_iso,
+                        "pct_change": pct
+                    }).eq("id", row["id"]).execute()
+                    filled += 1
+
+                if filled:
+                    logger.info(f"Filled outcomes for {filled} strategy signal rows")
+        except Exception as e:
+            logger.warning(f"Outcome filler error: {e}")
+        await asyncio.sleep(300)  # Every 5 minutes
+
+
+@app.on_event("startup")
+async def startup_strategy_logger():
+    asyncio.create_task(_log_strategy_signals_task())
+    asyncio.create_task(_fill_outcomes_task())
+
+
+@app.get("/strategy-history")
+def get_strategy_history(
+    symbol: str = "^NSEI",
+    days: int = 7,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Returns the last N days of individual strategy signals for a given index.
+    Used by the Strategies page to show per-strategy accuracy history.
+    """
+    try:
+        from utils.supabase_client import supabase
+        from datetime import datetime, timedelta
+        since = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        resp = (
+            supabase.table("strategy_signals_log")
+            .select("*")
+            .eq("index_key", symbol)
+            .gte("logged_at", since)
+            .order("logged_at", desc=False)
+            .execute()
+        )
+        return {"symbol": symbol, "days": days, "rows": resp.data or []}
+    except Exception as e:
+        logger.error(f"strategy-history error: {e}")
+        return {"symbol": symbol, "days": days, "rows": [], "error": str(e)}
 
 
 # =========================
@@ -2339,6 +2519,155 @@ def auto_trader_account_balance(current_user: dict = Depends(get_current_user)):
         "trading_mode": trader.trading_mode,
         "error": "Cannot fetch balance" if balance is None else None
     }
+
+
+# =========================
+# User Profile API
+# =========================
+
+@app.get("/user/profile")
+def get_user_profile(current_user: dict = Depends(get_current_user)):
+    """Get logged-in user's profile (mobile number etc.)"""
+    try:
+        from utils.supabase_client import supabase
+        user_id = current_user.get("user_id")
+        resp = supabase.table("users").select("mobile, full_name").eq("id", user_id).maybe_single().execute()
+        data = resp.data or {}
+        return {"mobile": data.get("mobile", ""), "full_name": data.get("full_name", "")}
+    except Exception as e:
+        return {"mobile": "", "full_name": "", "error": str(e)}
+
+
+@app.patch("/user/profile")
+def update_user_profile(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
+    """Update user's profile fields (mobile, full_name)"""
+    try:
+        from utils.supabase_client import supabase
+        user_id = current_user.get("user_id")
+        payload = {}
+        if "mobile" in body:
+            payload["mobile"] = str(body["mobile"])[:20]
+        if "full_name" in body:
+            payload["full_name"] = str(body["full_name"])[:100]
+        if not payload:
+            return {"status": "ok", "message": "Nothing to update"}
+        supabase.table("users").update(payload).eq("id", user_id).execute()
+        return {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+# =========================
+# User Trading Settings API
+# =========================
+
+@app.get("/user/settings")
+def get_user_settings(current_user: dict = Depends(get_current_user)):
+    """Get user's trading preferences (auto_start_paper, etc.)"""
+    try:
+        from utils.supabase_client import supabase
+        user_id = current_user.get("user_id")
+        resp = supabase.table("user_settings").select("*").eq("user_id", user_id).maybe_single().execute()
+        data = resp.data or {}
+        return {
+            "auto_start_paper": data.get("auto_start_paper", False),
+        }
+    except Exception as e:
+        return {"auto_start_paper": False, "error": str(e)}
+
+
+@app.post("/user/settings")
+def save_user_settings(body: dict = Body(...), current_user: dict = Depends(get_current_user)):
+    """Save user's trading preferences"""
+    try:
+        from utils.supabase_client import supabase
+        user_id = current_user.get("user_id")
+        payload = {
+            "user_id": user_id,
+            "auto_start_paper": bool(body.get("auto_start_paper", False)),
+        }
+        # Upsert (insert if not exists, update if exists)
+        supabase.table("user_settings").upsert(payload, on_conflict="user_id").execute()
+        return {"status": "ok", "auto_start_paper": payload["auto_start_paper"]}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# =========================
+# Auto-start background task (9:31 AM IST daily)
+# =========================
+
+async def _auto_start_paper_task():
+    """Every minute, check if it's 9:31 AM IST.
+    If so, start paper trading for all users who have auto_start_paper=True."""
+    _started_today = set()  # Track which user_ids we already started today
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            from datetime import datetime, timedelta
+            now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+            today = now_ist.date()
+
+            # Reset daily set at midnight
+            if now_ist.hour == 0 and now_ist.minute == 0:
+                _started_today.clear()
+
+            # Only fire at 9:31 AM
+            if not (now_ist.hour == 9 and now_ist.minute == 31):
+                continue
+
+            from utils.supabase_client import supabase
+
+            # Find all users with auto_start_paper=True
+            resp = supabase.table("user_settings").select("user_id").eq("auto_start_paper", True).execute()
+            eligible = [row["user_id"] for row in (resp.data or []) if row["user_id"] not in _started_today]
+
+            if not eligible:
+                continue
+
+            logger.info(f"Auto-start: {len(eligible)} user(s) eligible at 09:31 IST")
+
+            for uid in eligible:
+                try:
+                    with _auto_traders_lock:
+                        # Skip if user already has an active trader this session
+                        already_running = any(
+                            u == uid for (_, u, _) in _auto_traders_by_session.values()
+                        )
+                        if already_running:
+                            _started_today.add(uid)
+                            continue
+
+                        # Create server-side session id for this auto-start
+                        server_session_id = f"auto_{uid}_{today}"
+
+                        new_trader = AutoTrader(
+                            get_signal_fn=auto_trader.get_signal,
+                            get_option_ltp_fn=auto_trader.get_option_ltp,
+                            get_entry_snapshot_fn=auto_trader.get_entry_snapshot,
+                            kite=auto_trader.kite,
+                            user_id=uid
+                        )
+                        # Always paper mode for auto-start (safety)
+                        import time as _time_mod
+                        _auto_traders_by_session[server_session_id] = (new_trader, uid, _time_mod.time())
+                        set_auto_trader_user_id(uid)
+
+                        loop = asyncio.get_running_loop()
+                        new_trader.start(loop=loop)
+                        _started_today.add(uid)
+                        logger.info(f"Auto-started paper trader for user {uid} (session={server_session_id})")
+                except Exception as e:
+                    logger.error(f"Auto-start failed for user {uid}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Auto-start task error: {e}")
+
+
+@app.on_event("startup")
+async def startup_auto_start_task():
+    asyncio.create_task(_auto_start_paper_task())
 
 
 # =========================

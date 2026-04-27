@@ -4,7 +4,8 @@ export default function RoleCard({ role, indicators }) {
   const roleColors = {
     Trend: { bg: '#1e3a5f', border: '#3b82f6', label: '📈' },
     Momentum: { bg: '#3a1e4e', border: '#a855f7', label: '⚡' },
-    Strength: { bg: '#1e3a2e', border: '#10b981', label: '💪' }
+    Strength: { bg: '#1e3a2e', border: '#10b981', label: '💪' },
+    Structure: { bg: '#1e2a3a', border: '#f97316', label: '🏗️' }
   };
 
   const colors = {
@@ -42,7 +43,7 @@ export default function RoleCard({ role, indicators }) {
 
   // Get background color based on consensus - solid colors with transparency
   const getBackgroundColor = () => {
-    switch(consensus) {
+    switch (consensus) {
       case 'BUY':
         return 'rgba(22, 163, 74, 0.15)';
       case 'SELL':
@@ -56,7 +57,7 @@ export default function RoleCard({ role, indicators }) {
 
   // Get border color based on consensus
   const getBorderColor = () => {
-    switch(consensus) {
+    switch (consensus) {
       case 'BUY':
         return '#16a34a';
       case 'SELL':
@@ -82,9 +83,7 @@ export default function RoleCard({ role, indicators }) {
     >
       {/* Role Header */}
       <div style={{ textAlign: 'center', marginBottom: 15 }}>
-        <div
-          style={{ fontSize: 18, fontWeight: 'bold', color: '#cbd5e1' }}
-        >
+        <div style={{ fontSize: 18, fontWeight: 'bold', color: '#cbd5e1' }}>
           {role}
         </div>
       </div>

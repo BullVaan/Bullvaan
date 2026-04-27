@@ -13,6 +13,7 @@ import History from './pages/History';
 import Settings from './pages/Settings';
 import ProtectedRoute from './layout/ProtectedRoute';
 import CandlesCharts from './pages/CandlesCharts';
+import Strategies from './pages/Strategies';
 
 function App() {
   return (
@@ -87,10 +88,18 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/strategies"
+            element={
+              <ProtectedRoute>
+                <Strategies />
+              </ProtectedRoute>
+            }
+          />
         </Route>
       </Routes>
     </BrowserRouter>
   );
 }
 
-export default App;
+export default App;
