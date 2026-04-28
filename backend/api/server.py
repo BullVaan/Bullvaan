@@ -2290,6 +2290,35 @@ def auto_trader_status(current_user: dict = Depends(get_current_user)):
             "daily_pnl": 0.0
         }
 
+
+def _get_candles_for_autotrader(prefix: str, interval: str, count: int):
+    """Internal candle fetcher for AutoTrader ADX/key-level checks.
+    prefix: 'NIFTY', 'BANKNIFTY', 'SENSEX'
+    interval: '5minute', '15minute', etc.
+    count: number of candles needed
+    Returns: pd.DataFrame with columns [timestamp, open, high, low, close, volume] or None
+    """
+    import pandas as pd
+    from datetime import timezone
+    try:
+        IST = timezone(timedelta(hours=5, minutes=30))
+        token = _get_spot_token(prefix)
+        if not token:
+            return None
+        days_needed = max(3, (count * {"minute": 1, "5minute": 1, "15minute": 2}.get(interval, 1)) // 375 + 2)
+        now_ist = datetime.now(IST)
+        from_date = now_ist - timedelta(days=days_needed)
+        candles = kite.historical_data(token, from_date, now_ist, interval)
+        if not candles:
+            return None
+        df = pd.DataFrame(candles)
+        df = df.rename(columns={"date": "timestamp"})
+        return df.tail(count).reset_index(drop=True)
+    except Exception as e:
+        logging.getLogger("api.server").error(f"_get_candles_for_autotrader({prefix}, {interval}): {e}")
+        return None
+
+
 @app.post("/auto-trader/start")
 async def auto_trader_start(current_user: dict = Depends(get_current_user)):
     """Start the auto-trading engine for this session
@@ -2317,6 +2346,7 @@ async def auto_trader_start(current_user: dict = Depends(get_current_user)):
                 get_signal_fn=auto_trader.get_signal,
                 get_option_ltp_fn=auto_trader.get_option_ltp,
                 get_entry_snapshot_fn=auto_trader.get_entry_snapshot,
+                get_candles_fn=_get_candles_for_autotrader,
                 kite=auto_trader.kite,
                 user_id=user_id  # Pass user_id for multi-session support
             )
@@ -2451,7 +2481,8 @@ async def auto_trader_set_mode(body: dict = Body(...), current_user: dict = Depe
                     "trading_mode": "paper"
                 }
             try:
-                user_kite = KiteConnect(api_key=kite.api_key)
+                user_api_key = creds.get('api_key') or kite.api_key
+                user_kite = KiteConnect(api_key=user_api_key)
                 user_kite.set_access_token(creds['access_token'])
                 margins = user_kite.margins()
                 available = 0

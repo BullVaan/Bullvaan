@@ -56,6 +56,12 @@ EOD_EXIT = tuple(_config["eod_exit"])
 TEST_MODE = _config.get("test_mode", False)
 AVOID_FIRST_MINUTES = _config.get("avoid_first_minutes", 15)
 AVOID_LAST_MINUTES = _config.get("avoid_last_minutes", 30)
+ADX_THRESHOLD = _config.get("adx_threshold", 25)
+# Per-index capital allocation when multiple indices signal simultaneously
+CAPITAL_ALLOCATION = _config.get("capital_allocation", {"NIFTY": 0.50, "SENSEX": 0.30, "BANKNIFTY": 0.20})
+# Capital allocation per index when multiple indices signal simultaneously
+# e.g. NIFTY gets 50% of available capital, SENSEX 30%, BANKNIFTY 20%
+CAPITAL_ALLOCATION = _config.get("capital_allocation", {"NIFTY": 0.50, "SENSEX": 0.30, "BANKNIFTY": 0.20})
 
 
 def _get_signal_rule(index_name, signal_strength):
@@ -110,6 +116,15 @@ def _is_eod_exit_time():
         return False
     h, m = _ist_time_tuple()
     return (h > EOD_EXIT[0]) or (h == EOD_EXIT[0] and m >= EOD_EXIT[1])
+
+
+def _is_market_hours_or_just_closed():
+    """True only during market hours or within 2 hours after close (3:00–5:30 PM IST).
+    Prevents EOD exit from firing when the engine is started in the evening/night."""
+    h, m = _ist_time_tuple()
+    after_open = (h > MARKET_OPEN[0]) or (h == MARKET_OPEN[0] and m >= MARKET_OPEN[1])
+    before_evening = h < 17  # before 5 PM IST
+    return after_open and before_evening
 
 
 # ========== MULTI-USER CONTEXT ==========
@@ -169,17 +184,19 @@ class AutoTrader:
     Runs as an async background task inside the FastAPI server.
     """
 
-    def __init__(self, get_signal_fn, get_option_ltp_fn, get_entry_snapshot_fn=None, kite=None, user_id=None):
+    def __init__(self, get_signal_fn, get_option_ltp_fn, get_entry_snapshot_fn=None, get_candles_fn=None, kite=None, user_id=None):
         """
         get_signal_fn(symbol) -> dict with: consensus, signal_strength, india_vix
         get_option_ltp_fn(index_prefix, opt_type, strike=None) -> float LTP or None
         get_entry_snapshot_fn(prefix, opt_type) -> (atm_strike, ltp) atomic read
+        get_candles_fn(prefix, interval, count) -> pd.DataFrame or None
         kite: KiteConnect instance for admin/default (used for market data)
         user_id: User ID for per-user Kite credentials support
         """
         self.get_signal = get_signal_fn
         self.get_option_ltp = get_option_ltp_fn
         self.get_entry_snapshot = get_entry_snapshot_fn
+        self.get_candles = get_candles_fn  # Optional: (prefix, interval, count) -> DataFrame
         self.kite = kite  # Admin Kite instance (for market data)
         self.user_id = user_id  # Store user_id for multi-session trading
         
@@ -190,16 +207,17 @@ class AutoTrader:
                 from utils.user_credentials import get_user_credentials
                 creds = get_user_credentials(user_id)
                 if creds:
-                    # Create per-user Kite connection
-                    user_kite = KiteConnect(api_key=self.kite.api_key)  # Use app's API key
+                    # Use user's own API key (from their saved credentials), fall back to app key
+                    user_api_key = creds.get('api_key') or self.kite.api_key
+                    user_kite = KiteConnect(api_key=user_api_key)
                     user_kite.set_access_token(creds['access_token'])
                     self.user_kite = user_kite
                     logger.info(f"Loaded per-user Kite credentials for user {user_id}")
                 else:
-                    logger.warning(f"No saved Kite credentials for user {user_id} - will use admin credentials for trading")
+                    logger.warning(f"No saved Kite credentials for user {user_id} - real mode unavailable")
             except Exception as e:
                 logger.error(f"Error loading user credentials for {user_id}: {e}")
-                logger.warning(f"Falling back to admin credentials for user {user_id}")
+                logger.warning(f"Falling back: user_kite not set for user {user_id}")
         
         self.enabled = False
         self.running = False
@@ -316,6 +334,14 @@ class AutoTrader:
         affordable = int(self._available_capital() // cost_per_lot)
         return min(affordable, MAX_LOTS_PER_TRADE)
 
+    def _max_lots_with_capital(self, atm_price, lot_size, capital):
+        """Calculate max affordable lots given a specific capital budget"""
+        if atm_price <= 0 or lot_size <= 0:
+            return 0
+        cost_per_lot = atm_price * lot_size
+        affordable = int(capital // cost_per_lot)
+        return max(0, min(affordable, MAX_LOTS_PER_TRADE))
+
     def _is_on_cooldown(self, prefix):
         """Check if index is on cooldown after SL hit"""
         exp = self._cooldowns.get(prefix)
@@ -373,13 +399,7 @@ class AutoTrader:
                 logger.info(f"KEY LEVEL: {prefix} price is mid-range (not near any key level) → BLOCKED")
                 return False
 
-            # Signal direction should match consensus
-            if signal != consensus:
-                logger.info(f"KEY LEVEL: {prefix} near key level but direction mismatch "
-                            f"(key={signal}, consensus={consensus}) → BLOCKED")
-                return False
-
-            logger.info(f"KEY LEVEL: {prefix} price near key level, direction={signal} → ALLOWED")
+            logger.info(f"KEY LEVEL: {prefix} price near key level → ALLOWED")
             return True
         except Exception as e:
             logger.error(f"Error checking key level for {prefix}: {e}")
@@ -476,21 +496,17 @@ class AutoTrader:
         # Fallback to paper trading capital
         return TOTAL_CAPITAL - self._used_capital()
 
-    def _max_lots(self, atm_price, lot_size):
-        """Calculate max affordable lots"""
+    def _max_lots(self, atm_price, lot_size, capital=None):
+        """Calculate max affordable lots based on available (or given) capital"""
         if atm_price <= 0:
             return 0
         cost_per_lot = atm_price * lot_size
-        
-        # In real mode, allow only 1 lot (1 trade at a time as per user request)
-        # In paper mode, allow multiple lots based on capital
-        if self.trading_mode == "real":
-            max_allowed = 1
-        else:
-            max_allowed = MAX_LOTS_PER_TRADE
-        
-        affordable = int(self._get_available_capital() // cost_per_lot)
-        return min(affordable, max_allowed)
+        if cost_per_lot <= 0:
+            return 0
+        if capital is None:
+            capital = self._get_available_capital()
+        affordable = int(capital // cost_per_lot)
+        return max(0, min(affordable, MAX_LOTS_PER_TRADE))
 
     # ─── Kill switch ──────────────────────────────
 
@@ -570,42 +586,41 @@ class AutoTrader:
                 
                 tradingsymbol = self._get_option_tradingsymbol(prefix, strike, opt_type)
                 if not tradingsymbol:
-                    logger.error(f"Cannot get tradingsymbol for {option_name}")
-                    return trade
-                
-                # Place BUY order via Kite API with Bracket Order (BO) for automatic SL/TP
-                short_id = trade_id[-6:]
-                
-                # Calculate SL and TP amounts
-                sl_pts = rule.get('sl_pts', 25)
-                tp_pts = rule.get('target_pts', 20)
-                
-                # Use per-user Kite connection if available
-                kite_instance = self._get_kite_instance()
-                order_id = kite_instance.place_order(
-                    variety=kite_instance.VARIETY_BO,
-                    exchange="NFO" if prefix != "SENSEX" else "BFO",
-                    tradingsymbol=tradingsymbol,
-                    transaction_type=kite_instance.TRANSACTION_TYPE_BUY,
-                    quantity=quantity,
-                    order_type=kite_instance.ORDER_TYPE_MARKET,
-                    product=kite_instance.PRODUCT_BO,
-                    stoploss=sl_pts,
-                    squareoff=tp_pts,
-                    trailing_stoploss=0,
-                    tag=f"buy_{short_id}"
-                )
-                
-                self._real_order_ids[trade_id] = order_id
-                trade["order_id"] = order_id
-                trade["kite_tradingsymbol"] = tradingsymbol
-                trade["is_bo_trade"] = True
-                
-                logger.info(
-                    f"REAL AUTO BUY (BO): {option_name} | {quantity}qty | "
-                    f"₹{buy_price} | OrderID={order_id} | Strength={signal_strength} | "
-                    f"Target=+{rule['target_pts']} SL=-{rule['sl_pts']}"
-                )
+                    logger.error(f"Cannot get tradingsymbol for {option_name} — skipping real order, saving as paper")
+                    trade["error"] = f"tradingsymbol not found for {option_name}"
+                    # Fall through to save trade as paper (no order_id)
+                else:
+                    # Place MIS (intraday) BUY order via Kite API.
+                    # SL/TP monitoring is handled by auto_trader's tick loop.
+                    short_id = trade_id[-6:]
+                    
+                    # Use per-user Kite connection if available
+                    kite_instance = self._get_kite_instance()
+                    # Zerodha API blocks plain MARKET orders — use LIMIT at LTP + small
+                    # slippage buffer (0.5%) to guarantee fill while avoiding rejection.
+                    limit_price = round(buy_price * 1.005 / 0.05) * 0.05  # round to nearest 0.05 tick
+                    order_id = kite_instance.place_order(
+                        variety=kite_instance.VARIETY_REGULAR,
+                        exchange="NFO" if prefix != "SENSEX" else "BFO",
+                        tradingsymbol=tradingsymbol,
+                        transaction_type=kite_instance.TRANSACTION_TYPE_BUY,
+                        quantity=quantity,
+                        order_type=kite_instance.ORDER_TYPE_LIMIT,
+                        price=limit_price,
+                        product=kite_instance.PRODUCT_MIS,
+                        tag=f"buy_{short_id}"
+                    )
+                    
+                    self._real_order_ids[trade_id] = order_id
+                    trade["order_id"] = order_id
+                    trade["kite_tradingsymbol"] = tradingsymbol
+                    trade["is_bo_trade"] = True
+                    
+                    logger.info(
+                        f"REAL AUTO BUY (BO): {option_name} | {quantity}qty | "
+                        f"₹{buy_price} | OrderID={order_id} | Strength={signal_strength} | "
+                        f"Target=+{rule['target_pts']} SL=-{rule['sl_pts']}"
+                    )
             except Exception as e:
                 logger.error(f"Failed to place real buy order for {option_name}: {e}")
                 trade["error"] = str(e)
@@ -616,6 +631,8 @@ class AutoTrader:
         # Update in-memory immediately so next tick sees the open position
         self._open_positions[prefix] = trade
         self._daily_trade_count += 1
+        # Invalidate balance cache so next lot calculation uses fresh margin
+        self._account_cache.clear()
 
         logger.info(
             f"AUTO BUY: {option_name} | {lots}L x {lot_size} = {quantity}qty | "
@@ -648,15 +665,18 @@ class AutoTrader:
                         exchange = "NFO" if "SENSEX" not in tradingsymbol else "BFO"
                         
                         # Place SELL order via Kite API (using per-user credentials if available)
+                        # Use LIMIT at LTP - 0.5% buffer to guarantee fill
                         short_id = str(trade['id'])[-4:]
                         kite_instance = self._get_kite_instance()
+                        limit_price = round(sell_price * 0.995 / 0.05) * 0.05  # round to nearest 0.05 tick
                         sell_order_id = kite_instance.place_order(
                             variety=kite_instance.VARIETY_REGULAR,
                             exchange=exchange,
                             tradingsymbol=tradingsymbol,
                             transaction_type=kite_instance.TRANSACTION_TYPE_SELL,
                             quantity=qty,
-                            order_type=kite_instance.ORDER_TYPE_MARKET,
+                            order_type=kite_instance.ORDER_TYPE_LIMIT,
+                            price=limit_price,
                             product=kite_instance.PRODUCT_MIS,
                             tag=f"sell_{short_id}"
                         )
@@ -705,7 +725,8 @@ class AutoTrader:
             return
 
         # EOD exit — close all positions and stop engine
-        if _is_eod_exit_time():
+        # Only applies during/after market hours to avoid killing the engine on evening restarts
+        if _is_eod_exit_time() and _is_market_hours_or_just_closed():
             for t in self._get_open_trades():
                 ltp = self._get_trade_ltp(t)
                 sell_price = ltp if ltp else t['buy_price']
@@ -718,12 +739,72 @@ class AutoTrader:
         if not _is_market_hours():
             return
 
-        # Process each index in priority order
+        # ── PASS 1: EXIT LOGIC — process all open positions first ──
+        for symbol in INDEX_PRIORITY:
+            prefix = SYMBOL_MAP_REVERSE.get(symbol, "NIFTY")
+
+            try:
+                sig = self.get_signal(symbol)
+                if not sig or 'error' in sig:
+                    continue
+            except Exception as e:
+                logger.error(f"Auto-trader signal fetch error for {symbol}: {e}")
+                continue
+
+            consensus = sig.get('consensus', 'NEUTRAL')
+            open_trade = self._get_open_trade_for(prefix)
+
+            if not open_trade:
+                continue
+
+            ltp = self._get_trade_ltp(open_trade)
+            if not ltp:
+                continue
+
+            buy_price = open_trade['buy_price']
+            target_pts = open_trade.get('target_pts', 20)
+            sl_pts = open_trade.get('sl_pts', 10)
+            trade_strength = open_trade.get('signal_strength', 'STRONG')
+
+            # Stop loss
+            if ltp <= buy_price - sl_pts:
+                self._execute_sell(open_trade, ltp, reason="STOP_LOSS")
+                self._set_cooldown(prefix, SL_COOLDOWN_MINUTES)
+                continue
+
+            # Target hit
+            if ltp >= buy_price + target_pts:
+                self._execute_sell(open_trade, ltp, reason="TARGET_HIT")
+                rule = _get_signal_rule(prefix, trade_strength)
+                self._set_cooldown(prefix, rule["cooldown_minutes"])
+                continue
+
+            # Signal reversal
+            trade_type = 'CE' if 'CE' in open_trade['name'].upper() else 'PE'
+            trade_direction = 'BUY' if trade_type == 'CE' else 'SELL'
+            if consensus != 'NEUTRAL' and consensus != trade_direction:
+                self._execute_sell(open_trade, ltp, reason="SIGNAL_REVERSAL")
+                continue
+
+            # Signal goes NEUTRAL
+            if consensus == 'NEUTRAL':
+                self._execute_sell(open_trade, ltp, reason="SIGNAL_NEUTRAL")
+                self._set_cooldown(prefix, NEUTRAL_COOLDOWN_MINUTES)
+                continue
+
+        # ── PASS 2: ENTRY SCAN — collect all indices ready to enter this tick ──
+        # First identify every index that passes all filters and has confirmed price.
+        # Capital is allocated AFTER we know how many indices are signaling.
+        ready_entries = {}  # prefix -> {option_name, atm_price, lot_size, strength, rule, sig}
+
         for symbol in INDEX_PRIORITY:
             prefix = SYMBOL_MAP_REVERSE.get(symbol, "NIFTY")
             lot_size = LOT_SIZES.get(prefix, 65)
 
-            # Get signal for this index
+            # Skip if already in a position for this index
+            if self._get_open_trade_for(prefix):
+                continue
+
             try:
                 sig = self.get_signal(symbol)
                 if not sig or 'error' in sig:
@@ -734,143 +815,109 @@ class AutoTrader:
 
             consensus = sig.get('consensus', 'NEUTRAL')
             strength = sig.get('signal_strength', 'NONE')
-            vix = sig.get('india_vix', {}).get('value', 0)
-            if isinstance(vix, str):
-                vix = 0
 
-            open_trade = self._get_open_trade_for(prefix)
+            if consensus == 'NEUTRAL' or strength == 'NONE':
+                self._pending_entries.pop(prefix, None)
+                continue
 
-            # ── EXIT LOGIC ──
-            if open_trade:
-                ltp = self._get_trade_ltp(open_trade)
-                if not ltp:
-                    continue
+            if not _is_safe_entry_time():
+                logger.info(f"ENTRY BLOCKED: {prefix} outside safe entry window")
+                continue
 
-                buy_price = open_trade['buy_price']
-                target_pts = open_trade.get('target_pts', 20)
-                sl_pts = open_trade.get('sl_pts', 10)
-                trade_strength = open_trade.get('signal_strength', 'STRONG')
+            if not self._is_trend_strong(prefix):
+                logger.info(f"ENTRY BLOCKED: {prefix} consolidation detected (ADX < {ADX_THRESHOLD})")
+                continue
 
-                # Stop loss
-                if ltp <= buy_price - sl_pts:
-                    pnl = self._execute_sell(open_trade, ltp, reason="STOP_LOSS")
-                    # Longer cooldown after SL — market went against you
-                    self._set_cooldown(prefix, SL_COOLDOWN_MINUTES)
-                    continue
+            if not self._is_near_key_level(prefix, consensus):
+                logger.info(f"ENTRY BLOCKED: {prefix} price not near key level → waiting")
+                continue
 
-                # Target hit
-                if ltp >= buy_price + target_pts:
-                    self._execute_sell(open_trade, ltp, reason="TARGET_HIT")
-                    # Set cooldown after target hit to prevent rapid re-entry
-                    rule = _get_signal_rule(prefix, trade_strength)
-                    self._set_cooldown(prefix, rule["cooldown_minutes"])
-                    continue
+            rule = _get_signal_rule(prefix, strength)
+            if not rule:
+                continue
 
-                # Signal reversal (BUY trade but signal now SELL, or vice versa)
-                trade_type = 'CE' if 'CE' in open_trade['name'].upper() else 'PE'
-                trade_direction = 'BUY' if trade_type == 'CE' else 'SELL'
-                if consensus != 'NEUTRAL' and consensus != trade_direction:
-                    self._execute_sell(open_trade, ltp, reason="SIGNAL_REVERSAL")
-                    # Will enter new direction in next tick
-                    continue
+            if self._daily_trade_count >= MAX_TRADES_PER_DAY:
+                continue
 
-                # Signal goes NEUTRAL
-                if consensus == 'NEUTRAL':
-                    self._execute_sell(open_trade, ltp, reason="SIGNAL_NEUTRAL")
-                    self._set_cooldown(prefix, NEUTRAL_COOLDOWN_MINUTES)
-                    continue
+            if self._is_on_cooldown(prefix):
+                continue
 
-            # ── ENTRY LOGIC ──
-            else:
-                # Skip if NEUTRAL or no strength
-                if consensus == 'NEUTRAL' or strength == 'NONE':
-                    self._pending_entries.pop(prefix, None)  # clear stale pending
-                    continue
+            opt_type = 'CE' if consensus == 'BUY' else 'PE'
+            atm_strike, atm_price = None, None
+            if self.get_entry_snapshot:
+                atm_strike, atm_price = self.get_entry_snapshot(prefix, opt_type)
 
-                # ── TIME FILTER: avoid noisy open and close windows ──
-                if not _is_safe_entry_time():
-                    logger.info(f"ENTRY BLOCKED: {prefix} outside safe entry window (first {AVOID_FIRST_MINUTES}min / last {AVOID_LAST_MINUTES}min)")
-                    continue
+            if not atm_price or not atm_strike:
+                continue
 
-                # ── ADX FILTER: Skip entry during consolidation (ADX < 25) ──
-                # ADX < 25 means weak/consolidating market — trade has poor odds
-                if not self._is_trend_strong(prefix):
-                    logger.info(f"ENTRY BLOCKED: {prefix} consolidation detected (ADX < {ADX_THRESHOLD}) → waiting for trend")
-                    continue
+            option_name = f"{prefix} {atm_strike} {opt_type}"
 
-                # ── KEY LEVEL FILTER: only enter near PDH/PDL/round numbers ──
-                # Mid-range signals have poor odds — wait for price to reach a level
-                if not self._is_near_key_level(prefix, consensus):
-                    logger.info(f"ENTRY BLOCKED: {prefix} price not near key level → waiting")
-                    continue
-
-                # Get rule for this signal strength (index-specific)
-                rule = _get_signal_rule(prefix, strength)
-                if not rule:
-                    continue
-
-                # Trade count check
-                if self._daily_trade_count >= MAX_TRADES_PER_DAY:
-                    continue
-
-                # Cooldown check
-                if self._is_on_cooldown(prefix):
-                    continue
-
-                # Get ATM strike + LTP in one atomic read (no race condition)
-                opt_type = 'CE' if consensus == 'BUY' else 'PE'
-                atm_strike = None
-                atm_price = None
-
-                # ONLY use atomic snapshot — strike + price guaranteed from same moment.
-                # NEVER fall back to separate reads: get_option_ltp calculates its own ATM
-                # from spot, while get_atm_strike reads from dashboard — these can be
-                # DIFFERENT strikes, causing catastrophic price/strike mismatch
-                # (e.g., buying "79900 CE" at 80800 CE's price of ₹900).
-                if self.get_entry_snapshot:
-                    atm_strike, atm_price = self.get_entry_snapshot(prefix, opt_type)
-
-                if not atm_price or not atm_strike:
-                    # No fresh atomic snapshot — skip entry, wait for next cycle
-                    continue
-
-                # Capital check
-                lots = self._max_lots(atm_price, lot_size)
-                if lots <= 0:
-                    continue
-
-                option_name = f"{prefix} {atm_strike} {opt_type}"
-
-                # ── PRICE CONFIRMATION: require 2 consecutive similar readings ──
-                # Prevents buying at stale/spike prices. If the price moved more
-                # than SL_PTS between two consecutive readings, wait for stability.
-                pending = self._pending_entries.get(prefix)
-                sl_pts = rule["sl_pts"]
-                if pending and pending["opt_type"] == opt_type and pending["strike"] == atm_strike:
-                    price_diff = abs(atm_price - pending["price"])
-                    if price_diff > sl_pts:
-                        # Price moved too much between readings — update and wait
-                        self._pending_entries[prefix] = {"price": atm_price, "opt_type": opt_type, "strike": atm_strike}
-                        logger.warning(
-                            f"PRICE UNSTABLE: {option_name} prev=₹{pending['price']} now=₹{atm_price} "
-                            f"diff=₹{price_diff:.2f} > SL={sl_pts} → WAITING"
-                        )
-                        continue
-                    else:
-                        # Price confirmed — safe to enter
-                        logger.info(
-                            f"PRICE CONFIRMED: {option_name} prev=₹{pending['price']} now=₹{atm_price} "
-                            f"diff=₹{price_diff:.2f} ≤ SL={sl_pts} → ENTERING"
-                        )
-                        del self._pending_entries[prefix]
-                else:
-                    # First reading for this option — store and wait for confirmation
+            # ── PRICE CONFIRMATION: require 2 consecutive stable readings ──
+            pending = self._pending_entries.get(prefix)
+            sl_pts = rule["sl_pts"]
+            if pending and pending["opt_type"] == opt_type and pending["strike"] == atm_strike:
+                price_diff = abs(atm_price - pending["price"])
+                if price_diff > sl_pts:
                     self._pending_entries[prefix] = {"price": atm_price, "opt_type": opt_type, "strike": atm_strike}
-                    logger.info(f"PRICE PENDING: {option_name} = ₹{atm_price} → waiting for confirmation next cycle")
+                    logger.warning(
+                        f"PRICE UNSTABLE: {option_name} prev=₹{pending['price']} now=₹{atm_price} "
+                        f"diff=₹{price_diff:.2f} > SL={sl_pts} → WAITING"
+                    )
                     continue
+                else:
+                    logger.info(
+                        f"PRICE CONFIRMED: {option_name} prev=₹{pending['price']} now=₹{atm_price} "
+                        f"diff=₹{price_diff:.2f} ≤ SL={sl_pts} → ENTERING"
+                    )
+                    del self._pending_entries[prefix]
+                    ready_entries[prefix] = {
+                        "option_name": option_name,
+                        "atm_price": atm_price,
+                        "lot_size": lot_size,
+                        "strength": strength,
+                        "rule": rule,
+                        "sig": sig,
+                    }
+            else:
+                self._pending_entries[prefix] = {"price": atm_price, "opt_type": opt_type, "strike": atm_strike}
+                logger.info(f"PRICE PENDING: {option_name} = ₹{atm_price} → waiting for confirmation next cycle")
+                continue
 
-                # Execute!
-                self._execute_buy(prefix, option_name, atm_price, lots, lot_size, strength, rule, sig=sig)
+        if not ready_entries:
+            return
+
+        # ── CAPITAL ALLOCATION ──
+        # Proportional redistribution among ONLY the signaling indices — no idle capital.
+        # e.g. BANKNIFTY(20%) + SENSEX(30%) signaling → total weight=50 →
+        #      BANKNIFTY gets 40% (20/50), SENSEX gets 60% (30/50) of available capital.
+        total_available = self._get_available_capital()
+        n = len(ready_entries)
+        logger.info(f"CAPITAL ALLOCATION: {n} index(es) ready — total_available=₹{total_available:.0f} — indices={list(ready_entries.keys())}")
+
+        # Sum the weights of only the active (signaling) indices
+        total_weight = sum(CAPITAL_ALLOCATION.get(p, 1.0 / n) for p in ready_entries)
+
+        for prefix, entry in ready_entries.items():
+            raw_weight = CAPITAL_ALLOCATION.get(prefix, 1.0 / n)
+            alloc_pct = raw_weight / total_weight  # normalise to 100% across active indices
+            allocated = total_available * alloc_pct
+
+            lots = self._max_lots(entry["atm_price"], entry["lot_size"], capital=allocated)
+            if lots <= 0:
+                logger.info(
+                    f"ENTRY SKIPPED: {prefix} insufficient capital "
+                    f"(allocated=₹{allocated:.0f}, need ₹{entry['atm_price'] * entry['lot_size']:.0f}/lot)"
+                )
+                continue
+
+            logger.info(
+                f"ALLOCATING: {prefix} {alloc_pct * 100:.1f}% = ₹{allocated:.0f} → {lots} lot(s) @ ₹{entry['atm_price']}"
+            )
+
+            self._execute_buy(
+                prefix, entry["option_name"], entry["atm_price"],
+                lots, entry["lot_size"], entry["strength"], entry["rule"], sig=entry["sig"]
+            )
 
     def _get_trade_ltp(self, trade):
         """Get live LTP for an open trade's specific instrument"""
@@ -965,6 +1012,20 @@ class AutoTrader:
         
         # In real mode, verify user has their OWN Kite connection (never use admin credentials for real orders)
         if mode == "real":
+            # Always reload credentials from DB — user may have updated them since trader started
+            if self.user_id:
+                try:
+                    from utils.user_credentials import get_user_credentials
+                    creds = get_user_credentials(self.user_id)
+                    if creds:
+                        user_api_key = creds.get('api_key') or self.kite.api_key
+                        refreshed_kite = KiteConnect(api_key=user_api_key)
+                        refreshed_kite.set_access_token(creds['access_token'])
+                        self.user_kite = refreshed_kite
+                        logger.info(f"Refreshed user_kite for user {self.user_id} on mode switch to real")
+                except Exception as e:
+                    logger.error(f"Failed to refresh credentials for user {self.user_id}: {e}")
+
             if not self.user_kite:
                 self.trading_mode = "paper"  # Revert
                 return {

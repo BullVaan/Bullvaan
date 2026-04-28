@@ -2,13 +2,13 @@
   "mode": "paper",
   "total_capital": 100000,
   "max_daily_loss": 3000,
-  "max_trades_per_day": 8,
-  "max_lots_per_trade": 2,
+  "max_trades_per_day": 15,
+  "max_lots_per_trade": 5,
   "market_open": [9, 20],
   "market_close": [15, 25],
-  "eod_exit": [15, 0],
+  "eod_exit": [15, 15],
   "avoid_first_minutes": 15,
-  "avoid_last_minutes": 30,
+  "avoid_last_minutes": 15,
   "index_priority": ["^NSEI", "^NSEBANK", "^BSESN"],
   "lot_sizes": {
     "NIFTY": 65,
@@ -63,5 +63,10 @@
   "adx_threshold": 25,
   "sl_cooldown_minutes": 15,
   "neutral_cooldown_minutes": 5,
+  "capital_allocation": {
+    "NIFTY": 0.5,
+    "SENSEX": 0.3,
+    "BANKNIFTY": 0.2
+  },
   "test_mode": false
 }
