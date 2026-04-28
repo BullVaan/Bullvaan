@@ -94,6 +94,9 @@ def _is_safe_entry_time():
         return False
     return True
 
+
+def _is_market_hours():
+    """Check if current IST time is within market hours (9:15 AM - 3:30 PM)."""
     if TEST_MODE:
         return True
     h, m = _ist_time_tuple()
