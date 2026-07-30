@@ -10,8 +10,8 @@ from typing import Optional
 from dotenv import load_dotenv
 from kiteconnect import KiteConnect, KiteTicker
 from utils.nse_live import fetch_nse_indices
-from engine import AutoTrader, _invalidate_trades_cache
-from engine.auto_trader import _load_trades, _save_trades
+from engine import AutoTrader
+from engine.auto_trader import _load_trades, _save_trades, SIGNAL_RULES
 from engine.premarket_signals import PremarketSignalEngine
 from engine.premarket_alerts import PremarketAlertManager, AlertSeverity
 from utils.nifty50_stocks import get_nifty50_symbols
@@ -260,14 +260,23 @@ async def _subscribe_all_index_options():
                 if not expiry_options:
                     continue
 
-                for opt_type in ["CE", "PE"]:
-                    opt = next((i for i in expiry_options if i['strike'] == strike and i['instrument_type'] == opt_type), None)
-                    if not opt:
-                        continue
-                    tok = opt['instrument_token']
-                    if tok not in _tick_store:
-                        start_ticker({tok: {"name": opt['tradingsymbol'], "key": f"{cfg['exchange']}:{opt['tradingsymbol']}"}})
+                interval = cfg["interval"]
+                adjacent_strikes = [strike - interval, strike, strike + interval]  # ATM-1, ATM, ATM+1
 
+                for opt_type in ["CE", "PE"]:
+                    for adj_strike in adjacent_strikes:
+                        opt = next((i for i in expiry_options if i['strike'] == adj_strike and i['instrument_type'] == opt_type), None)
+                        if not opt:
+                            continue
+                        tok = opt['instrument_token']
+                        if tok not in _tick_store:
+                            start_ticker({tok: {"name": opt['tradingsymbol'], "key": f"{cfg['exchange']}:{opt['tradingsymbol']}"}})
+
+                    # Only store ATM in _dashboard_options (entry/exit logic unchanged)
+                    atm_opt = next((i for i in expiry_options if i['strike'] == strike and i['instrument_type'] == opt_type), None)
+                    if not atm_opt:
+                        continue
+                    tok = atm_opt['instrument_token']
                     tick = get_tick(tok)
                     if tick and tick.get("last_price"):
                         if zerodha_symbol not in _dashboard_options:
@@ -277,7 +286,26 @@ async def _subscribe_all_index_options():
                             "ltp": tick["last_price"],
                             "token": tok,
                             "_updated_at": tick.get("_last_trade_at", 0),
+                            "oi": tick.get("oi", 0),
+                            "volume": tick.get("volume_traded", tick.get("volume", 0)),
+                            "buy_qty": tick.get("total_buy_quantity", tick.get("buy_quantity", 0)),
+                            "sell_qty": tick.get("total_sell_quantity", tick.get("sell_quantity", 0)),
                         }
+
+                    # Store ATM±1 prices in _dashboard_options for signal log
+                    for offset, key_suffix in [(-interval, "m1"), (interval, "p1")]:
+                        adj_strike = strike + offset
+                        adj_opt = next((i for i in expiry_options if i['strike'] == adj_strike and i['instrument_type'] == opt_type), None)
+                        if not adj_opt:
+                            continue
+                        adj_tok = adj_opt['instrument_token']
+                        adj_tick = get_tick(adj_tok)
+                        if adj_tick and adj_tick.get("last_price"):
+                            adj_key = f"{opt_type}_{key_suffix}"  # e.g. CE_m1, PE_p1
+                            _dashboard_options[zerodha_symbol][adj_key] = {
+                                "strike": adj_strike,
+                                "ltp": adj_tick["last_price"],
+                            }
             except Exception as e:
                 logger.error(f"BG option subscriber error for {zerodha_symbol}: {e}")
         await asyncio.sleep(5)
@@ -307,19 +335,6 @@ strategies = [
     SupertrendStrategy(7, 2),           # Tight ATR for quick exits
     StochasticStrategy(5, 3, 3),        # Fast overbought/oversold
     ADXStrategy(14, 25),                # Trend strength filter
-]
-
-NIFTY50_SYMBOLS = [
-    "RELIANCE.NS","TCS.NS","HDFCBANK.NS","ICICIBANK.NS","INFY.NS",
-    "ITC.NS","LT.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS",
-    "HINDUNILVR.NS","ASIANPAINT.NS","MARUTI.NS","SUNPHARMA.NS","TITAN.NS",
-    "ULTRACEMCO.NS","NESTLEIND.NS","WIPRO.NS","NTPC.NS","POWERGRID.NS",
-    "JSWSTEEL.NS","TATASTEEL.NS","BAJFINANCE.NS","BAJAJFINSV.NS","ONGC.NS",
-    "HCLTECH.NS","TECHM.NS","COALINDIA.NS","INDUSINDBK.NS","ADANIENT.NS",
-    "ADANIPORTS.NS","BHARTIARTL.NS","BRITANNIA.NS","CIPLA.NS","DIVISLAB.NS",
-    "DRREDDY.NS","EICHERMOT.NS","GRASIM.NS","HEROMOTOCO.NS","HINDALCO.NS",
-    "BPCL.NS","IOC.NS","M&M.NS","SHREECEM.NS","SBILIFE.NS",
-    "TATACONSUM.NS","UPL.NS","APOLLOHOSP.NS","BAJAJ-AUTO.NS","PIDILITIND.NS"
 ]
 
 SECTOR_MAP = {
@@ -371,6 +386,69 @@ def detect_breakout(df):
     elif current < prev_low:
         return "BREAKDOWN"
     return "NONE"
+
+
+def category_consensus(signals):
+    """
+    Determine direction consensus for a category of indicators.
+    2 indicators: both must agree, BUY+NEUTRAL=BUY, conflict=NEUTRAL
+    3 indicators: 2+ neutral=NEUTRAL, any conflict=NEUTRAL, else active direction
+    """
+    if not signals:
+        return "NEUTRAL"
+    buy_c = signals.count("BUY")
+    sell_c = signals.count("SELL")
+    neutral_c = signals.count("NEUTRAL")
+    if buy_c > 0 and sell_c > 0:
+        return "NEUTRAL"
+    if len(signals) >= 3 and neutral_c >= 2:
+        return "NEUTRAL"
+    if buy_c > 0:
+        return "BUY"
+    if sell_c > 0:
+        return "SELL"
+    return "NEUTRAL"
+
+
+def _calculate_pcr(index, current_price):
+    """Calculate Put/Call Ratio for an index using OI from near-ATM strikes."""
+    instruments = kite.instruments("NFO")
+    current_month = datetime.now().strftime("%b").upper()
+    atm_strike = round(current_price / 100) * 100
+
+    put_oi = 0
+    call_oi = 0
+
+    for strike_offset in [0, -100, 100]:
+        strike = atm_strike + strike_offset
+        pe_symbol = f"{index}{current_month}{int(strike)}PE"
+        ce_symbol = f"{index}{current_month}{int(strike)}CE"
+
+        pe_inst = next((i for i in instruments if i.get("tradingsymbol") == pe_symbol), None)
+        ce_inst = next((i for i in instruments if i.get("tradingsymbol") == ce_symbol), None)
+
+        if pe_inst:
+            try:
+                pe_quote = kite.quote("NFO", [pe_inst.get("instrument_token")])[
+                    "NFO:" + str(pe_inst.get("instrument_token"))
+                ]
+                put_oi += pe_quote.get("oi", 0)
+            except Exception:
+                pass
+
+        if ce_inst:
+            try:
+                ce_quote = kite.quote("NFO", [ce_inst.get("instrument_token")])[
+                    "NFO:" + str(ce_inst.get("instrument_token"))
+                ]
+                call_oi += ce_quote.get("oi", 0)
+            except Exception:
+                pass
+
+    if call_oi > 0 and put_oi > 0:
+        return put_oi / call_oi
+    return None
+
 
 def momentum_score(change_pct, volume, avg_volume):
     # Prevent division by zero
@@ -659,28 +737,6 @@ def get_signals(symbol: str = "^NSEI", timeframe: str = "5m"):
         trend_signals = [s["signal"] for s in signals_by_role.get("Trend", [])]
         strength_signals = [s["signal"] for s in signals_by_role.get("Strength", [])]
         momentum_signals = [s["signal"] for s in signals_by_role.get("Momentum", [])]
-
-        def category_consensus(signals):
-            """
-            2 indicators: both must agree, BUY+NEUTRAL=BUY, conflict=NEUTRAL
-            3 indicators: 2+ neutral=NEUTRAL, any conflict=NEUTRAL, else active direction
-            """
-            if not signals:
-                return "NEUTRAL"
-            buy_c = signals.count("BUY")
-            sell_c = signals.count("SELL")
-            neutral_c = signals.count("NEUTRAL")
-            # Conflict: BUY and SELL both present
-            if buy_c > 0 and sell_c > 0:
-                return "NEUTRAL"
-            # For 3+ indicators: 2+ neutral = NEUTRAL
-            if len(signals) >= 3 and neutral_c >= 2:
-                return "NEUTRAL"
-            if buy_c > 0:
-                return "BUY"
-            if sell_c > 0:
-                return "SELL"
-            return "NEUTRAL"
 
         trend_dir = category_consensus(trend_signals)
         momentum_dir = category_consensus(momentum_signals)
@@ -1059,11 +1115,83 @@ def _auto_get_entry_snapshot(prefix, opt_type):
     logger.info(f"Entry snapshot FRESH: {prefix} {atm_strike} {opt_type} = ₹{ltp} (trade_age={age:.1f}s) → USING THIS PRICE")
     return atm_strike, ltp
 
+
+def _auto_get_adjacent_snapshot(prefix):
+    """
+    Read ATM±1 strike prices for signal log.
+    Returns dict: {
+        "atm_m1_strike": int, "atm_p1_strike": int,
+        "atm_m1_ce": float, "atm_m1_pe": float,
+        "atm_p1_ce": float, "atm_p1_pe": float,
+    } or None if unavailable.
+    """
+    dash = _dashboard_options.get(prefix)
+    if not dash:
+        return None
+    result = {}
+    for opt_type in ["CE", "PE"]:
+        for suffix in ["m1", "p1"]:
+            key = f"{opt_type}_{suffix}"  # e.g. CE_m1
+            adj = dash.get(key)
+            if adj:
+                result[f"atm_{suffix}_strike"] = adj["strike"]
+                result[f"atm_{suffix}_{opt_type.lower()}"] = adj["ltp"]
+    return result if result else None
+
+
+def _auto_get_expiry_snapshot(prefix):
+    """
+    Return the currently-active near expiry date for this index, and whether
+    today IS that expiry date. Used to tag signal log records so expiry-day
+    analysis doesn't have to be reconstructed after the fact from day-of-week.
+    Returns dict: {"expiry": "YYYY-MM-DD", "is_expiry_day": bool} or None.
+    """
+    try:
+        _, nearest_expiry = get_near_expiry_options(prefix)
+        if not nearest_expiry:
+            return None
+        today = datetime.now().date()
+        return {
+            "expiry": str(nearest_expiry),
+            "is_expiry_day": (nearest_expiry == today),
+        }
+    except Exception:
+        return None
+
+
+def _auto_get_oi_volume_snapshot(prefix):
+    """
+    Read OI, volume, buy_qty, sell_qty for ATM CE and PE from _dashboard_options.
+    Returns dict: {
+        "ce_oi": int, "ce_volume": int, "ce_buy_qty": int, "ce_sell_qty": int,
+        "pe_oi": int, "pe_volume": int, "pe_buy_qty": int, "pe_sell_qty": int,
+    } or None if unavailable.
+    """
+    dash = _dashboard_options.get(prefix)
+    if not dash:
+        return None
+    ce = dash.get("CE", {})
+    pe = dash.get("PE", {})
+    return {
+        "ce_oi":       ce.get("oi", 0),
+        "ce_volume":   ce.get("volume", 0),
+        "ce_buy_qty":  ce.get("buy_qty", 0),
+        "ce_sell_qty": ce.get("sell_qty", 0),
+        "pe_oi":       pe.get("oi", 0),
+        "pe_volume":   pe.get("volume", 0),
+        "pe_buy_qty":  pe.get("buy_qty", 0),
+        "pe_sell_qty": pe.get("sell_qty", 0),
+    }
+
+
 # Initialize auto-trader (singleton)
 auto_trader = AutoTrader(
     get_signal_fn=_auto_get_signal,
     get_option_ltp_fn=_auto_get_option_ltp,
     get_entry_snapshot_fn=_auto_get_entry_snapshot,
+    get_oi_volume_fn=_auto_get_oi_volume_snapshot,
+    get_adjacent_fn=_auto_get_adjacent_snapshot,
+    get_expiry_fn=_auto_get_expiry_snapshot,
 )
 
 # Initialize premarket signal engine
@@ -1197,6 +1325,10 @@ async def ws_options(websocket: WebSocket):
                             "ltp": tick["last_price"] if tick and tick.get("last_price") else None,
                             "token": tok,
                             "_updated_at": last_trade_at,  # when last ACTUAL TRADE happened on the exchange
+                            "oi": tick.get("oi", 0) if tick else 0,
+                            "volume": tick.get("volume_traded", tick.get("volume", 0)) if tick else 0,
+                            "buy_qty": tick.get("total_buy_quantity", tick.get("buy_quantity", 0)) if tick else 0,
+                            "sell_qty": tick.get("total_sell_quantity", tick.get("sell_quantity", 0)) if tick else 0,
                         }
 
                 # ── Track open trade instrument for live LTP ──
@@ -1843,6 +1975,13 @@ def update_trade(trade_id: int, trade: dict = Body(...)):
                 t['pnl'] = round((float(t['sell_price']) - float(t['buy_price'])) * qty, 2)
                 t['status'] = 'closed'
             _save_trades(trades)
+            # Update daily P&L (cooldowns removed in v1.5)
+            if t.get('status') == 'closed' and auto_trader.enabled:
+                prefix = t['name'].split()[0]
+                # Add manual trade P&L to auto-trader's daily P&L so dashboard reflects it
+                auto_trader._daily_pnl += t.get('pnl', 0)
+                if not t.get('auto'):
+                    auto_trader._daily_trade_count += 1
             return t
     return {"error": "Trade not found"}
 
@@ -2334,51 +2473,12 @@ def get_next_move():
                 pcr_score = 0
                 pcr_value = None
                 try:
-                    # Get options chain data
-                    # For NIFTY, we check near ATM (At-The-Money) options
                     current_price = candles[-1]["close"]
-                    
-                    if index == "NIFTY":
-                        # Get NIFTY options tokens
-                        instruments = kite.instruments("NFO")
-                        # Find near-the-money options (current month)
-                        current_month = datetime.now().strftime("%b").upper()
-                        atm_strike = round(current_price / 100) * 100
-                        
-                        # Look for CE and PE for ATM and 1-2 strikes around ATM
-                        put_oi = 0
-                        call_oi = 0
-                        
-                        for strike_offset in [0, -100, 100]:
-                            strike = atm_strike + strike_offset
-                            pe_symbol = f"NIFTY{current_month}{int(strike)}PE"
-                            ce_symbol = f"NIFTY{current_month}{int(strike)}CE"
-                            
-                            pe_inst = next((i for i in instruments if i.get("tradingsymbol") == pe_symbol), None)
-                            ce_inst = next((i for i in instruments if i.get("tradingsymbol") == ce_symbol), None)
-                            
-                            if pe_inst:
-                                try:
-                                    pe_quote = kite.quote("NFO", [pe_inst.get("instrument_token")])[
-                                        "NFO:" + str(pe_inst.get("instrument_token"))
-                                    ]
-                                    put_oi += pe_quote.get("oi", 0)
-                                except:
-                                    pass
-                            
-                            if ce_inst:
-                                try:
-                                    ce_quote = kite.quote("NFO", [ce_inst.get("instrument_token")])[
-                                        "NFO:" + str(ce_inst.get("instrument_token"))
-                                    ]
-                                    call_oi += ce_quote.get("oi", 0)
-                                except:
-                                    pass
-                        
-                        if call_oi > 0 and put_oi > 0:
-                            pcr_value = put_oi / call_oi
+
+                    if index in ("NIFTY", "BANKNIFTY"):
+                        pcr_value = _calculate_pcr(index, current_price)
+                        if pcr_value is not None:
                             signals["pcr_value"] = round(pcr_value, 2)
-                            
                             if pcr_value > 1.5:
                                 pcr_score = 20
                                 signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Overly bearish (reversal signal)")
@@ -2391,58 +2491,7 @@ def get_next_move():
                             else:
                                 pcr_score = -20
                                 signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Overly bullish (reversal signal)")
-                    
-                    elif index == "BANKNIFTY":
-                        instruments = kite.instruments("NFO")
-                        current_month = datetime.now().strftime("%b").upper()
-                        atm_strike = round(current_price / 100) * 100
-                        
-                        put_oi = 0
-                        call_oi = 0
-                        
-                        for strike_offset in [0, -100, 100]:
-                            strike = atm_strike + strike_offset
-                            pe_symbol = f"BANKNIFTY{current_month}{int(strike)}PE"
-                            ce_symbol = f"BANKNIFTY{current_month}{int(strike)}CE"
-                            
-                            pe_inst = next((i for i in instruments if i.get("tradingsymbol") == pe_symbol), None)
-                            ce_inst = next((i for i in instruments if i.get("tradingsymbol") == ce_symbol), None)
-                            
-                            if pe_inst:
-                                try:
-                                    pe_quote = kite.quote("NFO", [pe_inst.get("instrument_token")])[
-                                        "NFO:" + str(pe_inst.get("instrument_token"))
-                                    ]
-                                    put_oi += pe_quote.get("oi", 0)
-                                except:
-                                    pass
-                            
-                            if ce_inst:
-                                try:
-                                    ce_quote = kite.quote("NFO", [ce_inst.get("instrument_token")])[
-                                        "NFO:" + str(ce_inst.get("instrument_token"))
-                                    ]
-                                    call_oi += ce_quote.get("oi", 0)
-                                except:
-                                    pass
-                        
-                        if call_oi > 0 and put_oi > 0:
-                            pcr_value = put_oi / call_oi
-                            signals["pcr_value"] = round(pcr_value, 2)
-                            
-                            if pcr_value > 1.5:
-                                pcr_score = 20
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Overly bearish (reversal signal)")
-                            elif pcr_value > 1.0:
-                                pcr_score = 10
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Slightly bearish")
-                            elif pcr_value > 0.5:
-                                pcr_score = -10
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Slightly bullish")
-                            else:
-                                pcr_score = -20
-                                signals["signals"].append(f"🔄 PCR {pcr_value:.2f} - Overly bullish (reversal signal)")
-                
+
                 except Exception as e:
                     logger.debug(f"PCR calculation skipped for {index}: {e}")
                     signals["signals"].append("⚠️ PCR data unavailable")
@@ -2500,8 +2549,3 @@ def get_next_move():
         logger = logging.getLogger("api.server")
         logger.error(f"Error in next-move endpoint: {e}")
         return {"error": str(e), "timestamp": datetime.now().isoformat()}
-        logger.error(f"Health check failed: {e}", exc_info=True)
-        return {
-            "status": "error",
-            "message": str(e)
-        }

@@ -44,7 +44,11 @@ export default function OptionSuggestion({ signal, price, symbol, autoEnabled = 
     }
   }, [config.prefix]);
 
-  useEffect(() => { fetchOpenTrade(); }, [fetchOpenTrade]);
+  useEffect(() => {
+    fetchOpenTrade();
+    const interval = setInterval(fetchOpenTrade, 5000);
+    return () => clearInterval(interval);
+  }, [fetchOpenTrade]);
 
   // ── BUY action ──
   const handleBuy = async (optionName, buyPrice) => {

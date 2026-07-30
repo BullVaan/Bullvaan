@@ -2,9 +2,9 @@
   "mode": "paper",
   "total_capital": 100000,
   "max_daily_loss": 5000,
-  "max_trades_per_day": 15,
+  "max_trades_per_day": 9,
   "max_lots_per_trade": 5,
-  "market_open": [9, 20],
+  "market_open": [9, 15],
   "market_close": [15, 25],
   "eod_exit": [15, 25],
   "index_priority": ["^NSEI", "^NSEBANK", "^BSESN"],
@@ -13,21 +13,58 @@
     "BANKNIFTY": 30,
     "SENSEX": 20
   },
+  "index_rules": {
+    "NIFTY": { "target_pts": 5, "sl_pts": 5, "breakeven_lock_pts": 3 },
+    "BANKNIFTY": { "target_pts": 12, "sl_pts": 10 },
+    "SENSEX": { "target_pts": 12, "sl_pts": 10 }
+  },
+  "max_premium": {
+    "BANKNIFTY": 1000,
+    "SENSEX": 500
+  },
   "signal_rules": {
     "STRONG": {
       "target_pts": 20,
       "sl_pts": 10,
       "allow_reentry": true,
-      "cooldown_minutes": 3
+      "cooldown_minutes": 5
     },
     "MEDIUM": {
       "target_pts": 12,
       "sl_pts": 10,
       "allow_reentry": true,
-      "cooldown_minutes": 3
+      "cooldown_minutes": 5
     }
   },
-  "sl_cooldown_minutes": 5,
-  "neutral_cooldown_minutes": 2,
+  "sl_cooldown_minutes": 15,
+  "neutral_cooldown_minutes": 5,
+  "max_consecutive_sl": 2,
+  "loss_streak": {
+    "max_consecutive_losses": 3,
+    "max_streak_amount": 3000,
+    "min_losses_for_amount": 2
+  },
+  "entry_skip_window": null,
+  "afternoon_sell_only": null,
+  "adaptive_config": {
+    "enabled": true,
+    "start_mode": "choppy",
+    "switch_trigger": "2_consecutive_wins",
+    "choppy": {
+      "NIFTY":     { "target_pts": 5,  "sl_pts": 5,  "breakeven_lock_pts": 3 },
+      "BANKNIFTY": { "target_pts": 12, "sl_pts": 10 },
+      "SENSEX":    { "target_pts": 12, "sl_pts": 10 }
+    },
+    "trending": {
+      "NIFTY":     { "target_pts": 10, "sl_pts": 8,  "breakeven_lock_pts": 5 },
+      "BANKNIFTY": { "target_pts": 15, "sl_pts": 18 },
+      "SENSEX":    { "target_pts": 6,  "sl_pts": 12 },
+      "neutral_exit": false
+    }
+  },
+  "profit_protect_threshold": 3000,
+  "profit_protect_drawdown": 2000,
+  "late_session_cooldown_multiplier": 2,
+  "late_session_start": [10, 30],
   "test_mode": false
 }

@@ -38,6 +38,9 @@ dist/
 logs/
 *.log
 
+# Trading data (local only)
+backend/data/
+
 # Local env / secrets (keep out of git)
 .env
 .env.*

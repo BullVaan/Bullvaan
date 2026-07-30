@@ -468,12 +468,13 @@ function Dashboard() {
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: autoTrader.enabled ? '#22c55e' : '#94a3b8', letterSpacing: 0.5 }}>
                 AUTO TRADER {autoTrader.enabled ? 'ACTIVE' : 'OFF'}
-                {autoTrader.killed && <span style={{ color: '#ef4444', marginLeft: 8 }}>KILLED</span>}
+                {/* Kill switch disabled for testing */}
+                {/* {autoTrader.killed && <span style={{ color: '#ef4444', marginLeft: 8 }}>KILLED</span>} */}
               </div>
               <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
                 Paper Mode • Capital: ₹{(autoTrader.available_capital ?? autoTrader.capital ?? 100000).toLocaleString('en-IN')}
                 {autoTrader.enabled && (
-                  <> • Trades: {autoTrader.daily_trade_count || 0}/{autoTrader.max_trades_per_day || 15}
+                  <> • Trades: {autoTrader.daily_trade_count || 0}
                   • P&L: <span style={{ color: (autoTrader.daily_pnl || 0) >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
                     {(autoTrader.daily_pnl || 0) >= 0 ? '+' : ''}₹{(autoTrader.daily_pnl || 0).toFixed(2)}
                   </span></>
