@@ -11,6 +11,7 @@ import Trades from './pages/Trades';
 import ActiveOrders from './pages/ActiveOrders';
 import History from './pages/History';
 import Settings from './pages/Settings';
+import TestingStrategies from './pages/TestingStrategies';
 import ProtectedRoute from './layout/ProtectedRoute';
 import CandlesCharts from './pages/CandlesCharts';
 
@@ -44,6 +45,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <SwingTrade />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/testing-strategies"
+            element={
+              <ProtectedRoute>
+                <TestingStrategies />
               </ProtectedRoute>
             }
           />
@@ -93,4 +102,4 @@ function App() {
   );
 }
 
-export default App;
+export default App;

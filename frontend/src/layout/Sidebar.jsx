@@ -33,6 +33,11 @@ export default function Sidebar() {
       icon: <Landmark size={24} />
     },
     {
+      name: 'Testing Stretgies',
+      path: '/testing-strategies',
+      icon: <BarChart3 size={24} />
+    },
+    {
       name: 'Charting',
       path: '/candles-charts',
       icon: <BarChart3 size={24} />
