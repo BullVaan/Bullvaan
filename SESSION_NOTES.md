@@ -1,5 +1,5 @@
 # Bullvaan — Session Notes
-> Last updated: 2026-08-03  
+> Last updated: 2026-08-14  
 > This file captures everything built, every decision made, and all open tasks.  
 > Read this file first when starting a new session or on a new machine.
 
@@ -84,6 +84,36 @@ We use GIFT NIFTY's gap vs. NIFTY's previous close to predict market direction a
 - Retry every 30 seconds until data arrives **or** 9:12 AM deadline
 - IEP noise floor: gaps < 20 pts treated as neutral
 
+### Entry Mode — Rule C
+When NIFTY IEP signal conflicts with the gap direction, don't enter immediately — wait for confirmation:
+- **CE (BULLISH)**: wait for a higher-high **green** candle after the entry time
+- **PE (BEARISH)**: same — wait for the option going UP (lower-low red spot candle)
+- Rule C always watches for the **option going UP** regardless of CE/PE
+- If Rule C never fires, no trade is taken
+
+### BN IEP Conflict Flip Rule
+When GIFT NIFTY gap is BULLISH but BANKNIFTY IEP is strongly bearish, flip from CE to PE:
+
+| Condition | Action |
+|---|---|
+| `direction == BULLISH` AND `BN IEP gap < −50 pts` | Flip to PE, apply Rule C for PE entry |
+| `BN IEP gap ≥ −50 pts` | No flip — stick with CE |
+
+**Threshold = 50 pts** (conservative; both confirmed flip days were −54.5 pts).
+
+Implemented in:
+- `backend/premarket/run_signal.py` — saves `trade_direction`, `opt_type`, `entry_mode` in signal record
+- `backend/premarket/executor.py` — reads signal record, uses `trade_direction` for strike selection
+- `backend/adaptive/main.py` — reads `iep_prices.BANKNIFTY.gap` from signal record
+
+### BN Conflict Flip — Track Record
+| Date | BN IEP gap | Day type | CE result | PE result | Flip rule fired? | Correct? |
+|---|---|---|---|---|---|---|
+| Aug 5, 2026 | −54.5 | BULLISH | SL −₹20,475 | TARGET +₹32,175 | ✅ Yes | ✅ |
+| Aug 12, 2026 | −54.5 | BULLISH | SL −₹26,325 | TARGET +₹32,175 | ✅ Yes | ✅ |
+| Aug 13, 2026 | −86.7 | FLAT (skip) | — | — | Would have fired | — |
+| Aug 14, 2026 | −45.5 | FLAT (skip) | +₹1,869 EOD | (CE profitable) | No (−45.5 > −50) | ✅ |
+
 ### Files (all inside `backend/premarket/`)
 | File | Purpose |
 |---|---|
@@ -130,7 +160,40 @@ NIFTY2680424450CE  ltp=128.50  entry=114.95  P&L=+13.55pts  T=55  SL=-45
 
 ---
 
-## 4. Live Paper Trade Results (as of Aug 3, 2026)
+## 4. Adaptive Strategy
+
+### Concept
+A second, lower-risk strategy that enters at **10:00 AM** at the ATM strike, after opening volatility has settled.
+
+### Rules
+| Parameter | Value |
+|---|---|
+| Entry time | 10:00 AM open price |
+| Strike | ATM (computed from spot at 10:00) |
+| Opt type | CE for BULLISH, PE for BEARISH |
+| Target | 20 pts |
+| Stop Loss | 30 pts |
+| BN conflict flip | Same rule as premarket — if `BN IEP gap < −50` on BULLISH day, take ATM PE |
+
+### File
+`backend/adaptive/main.py`
+
+### How to Run
+```bash
+cd backend && source venv/bin/activate
+python3 -m adaptive.main
+```
+
+### Adaptive Results (hypothetical, Aug 2026)
+| Date | Direction | Opt | Entry | Outcome | PnL |
+|---|---|---|---|---|---|
+| Aug 12 | BULLISH → PE (flip) | PE ATM | ₹78 | TARGET | +₹11,700 |
+| Aug 13 | FLAT (hypo) | PE | — | TARGET | +₹2,600 |
+| Aug 14 | FLAT (hypo) | CE ATM | ₹78 | TARGET | +₹1,300 |
+
+---
+
+## 5. Live Paper Trade Results (as of Aug 3, 2026)
 
 Stored in: `backend/data/premarket_trades.jsonl`
 
@@ -153,7 +216,7 @@ Stored in: `backend/data/premarket_trades.jsonl`
 
 ---
 
-## 5. Backtest Results (NIFTY, Jul 22 – Aug 3, 2026)
+## 6. Backtest Results (NIFTY, Jul 22 – Aug 3, 2026)
 
 Data source: `backend/data/nifty_option_history.json`  
 9 days. Gaps hardcoded. BEARISH now uses ITM_100 PE (changed from OTM_50).
@@ -175,7 +238,7 @@ Data source: `backend/data/nifty_option_history.json`
 
 ---
 
-## 6. Signal History
+## 7. Signal History
 
 Stored in: `backend/data/premarket_signals.jsonl`  
 (Code to save signals was added after Jul 31 and Aug 3 runs — file may be empty)
@@ -188,7 +251,7 @@ python3 -m premarket.run_signal
 
 ---
 
-## 7. Frontend Pages
+## 8. Frontend Pages
 
 | Route | File | Description |
 |---|---|---|
@@ -217,7 +280,7 @@ Bulls Approach shows all records when no date is selected; filters to selected d
 
 ---
 
-## 8. Backend API Endpoints (Key Ones)
+## 9. Backend API Endpoints (Key Ones)
 
 | Method | Path | Description |
 |---|---|---|
@@ -238,16 +301,24 @@ Bulls Approach shows all records when no date is selected; filters to selected d
 
 ---
 
-## 9. Key Data Files
+## 10. Key Data Files
 
 | File | Description |
 |---|---|
 | `backend/data/premarket_trades.jsonl` | All live/paper premarket trade records |
-| `backend/data/premarket_signals.jsonl` | Daily signal reports |
+| `backend/data/premarket_signals.jsonl` | Daily signal reports (includes IEP data, trade_direction) |
 | `backend/data/premarket_snapshots.jsonl` | Morning GIFT NIFTY snapshots |
-| `backend/data/nifty_option_history.json` | 9-day NIFTY option candle history for backtest |
+| `backend/data/signal_logs/YYYY-MM-DD.jsonl` | Per-day intraday signal logs (spot prices, candle events) |
+| `backend/data/nifty_option_history.json` | NIFTY CE candle history (all days, 5-min candles) |
+| `backend/data/nifty_pe_history.json` | NIFTY PE candle history (auto-saved by fetch_option_data.py) |
+| `backend/data/banknifty_option_history.json` | BANKNIFTY CE candle history |
+| `backend/data/banknifty_pe_history.json` | BANKNIFTY PE candle history |
+| `backend/data/sensex_option_history.json` | SENSEX CE candle history |
+| `backend/data/sensex_pe_history.json` | SENSEX PE candle history |
 | `backend/data/trades.json` | Manual trades (from /trades page) |
 | `config/trading_rules.json` | Trading rules config |
+
+> **Note:** `backend/data/` is in `.gitignore` — data files are local only.
 
 ### premarket_trades.jsonl record fields
 ```json
@@ -271,7 +342,22 @@ Bulls Approach shows all records when no date is selected; filters to selected d
 
 ---
 
-## 10. Zerodha Instrument Tokens (Important)
+## 11. EOD Data Fetch Routine
+
+```bash
+cd backend && source venv/bin/activate
+python fetch_option_data.py          # today
+python fetch_option_data.py 2026-08-05  # specific date
+```
+
+Fetches **both CE and PE** for all 3 indices (NIFTY, BANKNIFTY, SENSEX) in one run.
+- CE → `*_option_history.json`
+- PE → `*_pe_history.json`
+- `fetch_pe_candles.py` is superseded — no longer needed.
+
+---
+
+## 12. Zerodha Instrument Tokens (Important)
 
 | Instrument | Token |
 |---|---|
@@ -282,31 +368,37 @@ Bulls Approach shows all records when no date is selected; filters to selected d
 
 ---
 
-## 11. Open Tasks / Next Steps
+## 13. Open Tasks / Next Steps
 
-- [ ] **premarket_signals.jsonl**: Re-run `python3 -m premarket.run_signal` to save today's signal (Jul 31 and Aug 3 signals were not saved as code was added after those runs)
-- [ ] **backtest_premarket_nifty.py**: Update to use `ITM_100` for BEARISH direction (currently uses `OTM_50` key)
+- [ ] **BN conflict threshold**: Validate with more data between −20 and −50 pts to confirm 50pt boundary
 - [ ] **BANKNIFTY + SENSEX live runs**: Only NIFTY has been run live so far
+- [ ] **Adaptive strategy live run**: `adaptive/main.py` written but not yet run in paper/live mode
 - [ ] **premarket_signals.jsonl display**: Consider showing signal history in frontend
-- [ ] **Git**: Commit all changes (sidebar fix, Bulls Approach table, backend endpoint)
+- [ ] **Historical PE data**: Re-run `fetch_option_data.py` for older dates to backfill pe_history files
 
 ---
 
-## 12. Key Decisions Made (Why Things Are The Way They Are)
+## 14. Key Decisions Made (Why Things Are The Way They Are)
 
 | Decision | Reason |
 |---|---|
-| T=55/SL=45 for NIFTY | 71% win rate vs 57% with T=60/SL=50 |
-| ITM_100 for both CE and PE | More premium, better absolute profit per point |
+| T=55/SL=45 for NIFTY premarket | 71% win rate vs 57% with T=60/SL=50 |
+| T=20/SL=30 for adaptive | Lower risk at ATM; ATM has less premium than ITM_100 |
+| ITM_100 for premarket CE/PE | More premium, better absolute profit per point |
+| ATM for adaptive | Entry at 10:00 when volatility settles; tight T/SL suits ATM |
 | Strike from 9:15 spot always | Jul 31 bug: 9:20 spot gave wrong strike, missed target |
 | IEP wait until 9:08 + retry until 9:12 | IEP data not available before pre-open auction ends |
+| IEP noise floor = 20 pts | Gaps < 20 pts are indistinguishable from noise |
+| BN conflict threshold = 50 pts | Conservative — both confirmed data points were −54.5 pts; −45.5 was CE-profitable |
+| Rule C always watches option going UP | CE up = spot up; PE up = spot down — same logic regardless of opt_type |
+| `fetch_option_data.py` fetches both CE and PE | Needed for daily analysis without a separate manual script |
+| `backend/data/` in .gitignore | Data files are large, local, and change daily — not for version control |
 | `position: fixed` sidebar | User feedback — sidebar was scrolling with page |
 | Bulls Approach shows all records by default | Premarket trades are sparse (1/day) — showing all is more useful |
-| Norway timezone | User is in Norway (UTC+2), IST is UTC+5:30, 3.5h ahead |
 
 ---
 
-## 13. Strategy Performance Summary (PREMARKET_README.md Chapter 4)
+## 15. Strategy Performance Summary (PREMARKET_README.md Chapter 4)
 
 | Index | Trades | W | L | EOD | P&L |
 |---|---|---|---|---|---|
