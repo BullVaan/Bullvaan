@@ -38,7 +38,7 @@ dist/
 logs/
 *.log
 
-# Trading data (local only)
+# Local data (candle history, trade records, signal logs)
 backend/data/
 
 # Local env / secrets (keep out of git)

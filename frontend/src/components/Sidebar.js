@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -12,8 +11,7 @@ import {
   TrendingUp
 } from 'lucide-react';
 
-export default function Sidebar() {
-  const [open, setOpen] = useState(true);
+export default function Sidebar({ open, setOpen }) {
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -50,10 +48,14 @@ export default function Sidebar() {
         background: '#020617',
         height: '100vh',
         borderRight: '1px solid #334155',
-        transition: '0.3s',
+        transition: 'width 0.3s',
         display: 'flex',
         flexDirection: 'column',
-        flexShrink: 0
+        flexShrink: 0,
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        zIndex: 100
       }}
     >
       {/* Logo/Brand */}

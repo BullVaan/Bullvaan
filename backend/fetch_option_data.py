@@ -34,18 +34,21 @@ INDEX_CONFIGS = {
         'strike_interval': 50,
         'lot_size':        65,
         'file':            'data/nifty_option_history.json',
+        'pe_file':         'data/nifty_pe_history.json',
     },
     'BANKNIFTY': {
         'exchange':        'NFO',
         'strike_interval': 100,
         'lot_size':        30,
         'file':            'data/banknifty_option_history.json',
+        'pe_file':         'data/banknifty_pe_history.json',
     },
     'SENSEX': {
         'exchange':        'BFO',
         'strike_interval': 100,
         'lot_size':        20,
         'file':            'data/sensex_option_history.json',
+        'pe_file':         'data/sensex_pe_history.json',
     },
 }
 
@@ -112,13 +115,23 @@ def fetch_strikes(kite, insts, index_name: str, trade_date: str,
     to_dt   = datetime.strptime(trade_date + ' 15:30', '%Y-%m-%d %H:%M')
 
     atm = round(spot_open / strike_interval) * strike_interval
-    strikes_map = {
-        'OTM_50':  atm + strike_interval,
-        'ATM':     atm,
-        'ITM_50':  atm - strike_interval,
-        'ITM_100': atm - 2 * strike_interval,
-        'ITM_150': atm - 3 * strike_interval,
-    }
+    # CE: ITM = lower strike; PE: ITM = higher strike
+    if opt_type == 'PE':
+        strikes_map = {
+            'OTM_50':  atm - strike_interval,
+            'ATM':     atm,
+            'ITM_50':  atm + strike_interval,
+            'ITM_100': atm + 2 * strike_interval,
+            'ITM_150': atm + 3 * strike_interval,
+        }
+    else:
+        strikes_map = {
+            'OTM_50':  atm + strike_interval,
+            'ATM':     atm,
+            'ITM_50':  atm - strike_interval,
+            'ITM_100': atm - 2 * strike_interval,
+            'ITM_150': atm - 3 * strike_interval,
+        }
 
     token_map = {
         i['strike']: i for i in insts
@@ -191,10 +204,7 @@ def main():
         log.error('No spot data found. Is the signal log present? Aborting.')
         return
 
-    # Determine opt_type (save CE for BULLISH/FLAT, PE for BEARISH)
-    # We save whichever side the signal points to.
-    # For FLAT days, save CE by default (for reference, not for trading)
-    opt_type = 'PE' if direction == 'BEARISH' else 'CE'
+    # Always fetch both CE and PE regardless of direction
 
     # Load instruments once per exchange
     log.info('Loading NFO instruments...')
@@ -211,24 +221,27 @@ def main():
             continue
 
         insts = exchange_insts[cfg['exchange']]
-        expiry = find_nearest_expiry(insts, index_name, opt_type, trade_date)
-        if not expiry:
-            log.warning(f'{index_name}: no expiry found, skipping')
-            continue
 
-        log.info(f'\n=== {index_name} | spot={spot} | expiry={expiry} | {opt_type} ===')
+        for opt_type in ('CE', 'PE'):
+            expiry = find_nearest_expiry(insts, index_name, opt_type, trade_date)
+            if not expiry:
+                log.warning(f'{index_name} {opt_type}: no expiry found, skipping')
+                continue
 
-        result = fetch_strikes(
-            kite, insts, index_name, trade_date,
-            spot, expiry, opt_type,
-            cfg['strike_interval'], cfg['lot_size']
-        )
-        result['pm_direction'] = direction
+            log.info(f'\n=== {index_name} | spot={spot} | expiry={expiry} | {opt_type} ===')
 
-        history = load_history(cfg['file'])
-        history[trade_date] = result
-        save_history(cfg['file'], history)
-        log.info(f'Saved to {cfg["file"]}  (total days: {len(history)})')
+            result = fetch_strikes(
+                kite, insts, index_name, trade_date,
+                spot, expiry, opt_type,
+                cfg['strike_interval'], cfg['lot_size']
+            )
+            result['pm_direction'] = direction
+
+            out_file = cfg['pe_file'] if opt_type == 'PE' else cfg['file']
+            history = load_history(out_file)
+            history[trade_date] = result
+            save_history(out_file, history)
+            log.info(f'Saved to {out_file}  (total days: {len(history)})')
 
     log.info('\nDone.')
 

@@ -1515,6 +1515,27 @@ async def ws_trades(websocket: WebSocket):
 
                 await websocket.send_text(json.dumps(ltp_map))
 
+                # Also stream LTP for any open premarket trades
+                pm_path = os.path.join(os.path.dirname(__file__), "..", "data", "premarket_trades.jsonl")
+                if os.path.exists(pm_path):
+                    with open(pm_path) as _pmf:
+                        _pm_records = [json.loads(l) for l in _pmf if l.strip()]
+                    for pm in _pm_records:
+                        if pm.get("status") != "open":
+                            continue
+                        sym      = pm.get("tradingsymbol")
+                        exchange = pm.get("exchange", "NFO")
+                        ltp_key  = f"{exchange}:{sym}"
+                        try:
+                            _ltp_data = kite.ltp([ltp_key])
+                            price = _ltp_data.get(ltp_key, {}).get("last_price")
+                            if price:
+                                ltp_map[sym] = price
+                        except Exception:
+                            pass
+                    if any(pm.get("status") == "open" for pm in _pm_records):
+                        await websocket.send_text(json.dumps(ltp_map))
+
             except (WebSocketDisconnect, asyncio.CancelledError):
                 break
             except Exception as e:
@@ -1992,6 +2013,34 @@ def delete_trade(trade_id: int):
     trades = [t for t in trades if t['id'] != trade_id]
     _save_trades(trades)
     return {"status": "deleted"}
+
+
+@app.get("/premarket-trades")
+def get_premarket_trades(date: str = None):
+    """
+    Return premarket trades from data/premarket_trades.jsonl.
+    Optionally filter by date (YYYY-MM-DD). Defaults to today IST.
+    """
+    import json as _json
+    jsonl_path = os.path.join(os.path.dirname(__file__), "..", "data", "premarket_trades.jsonl")
+    trades = []
+    if os.path.exists(jsonl_path):
+        with open(jsonl_path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    trades.append(_json.loads(line))
+
+    if date:
+        trades = [t for t in trades if t.get('date') == date]
+
+    total_pnl = round(sum(t.get('pnl', 0) for t in trades), 2)
+    return {
+        "date": date or "all",
+        "total_pnl": total_pnl,
+        "trade_count": len(trades),
+        "trades": trades
+    }
 
 
 # =========================

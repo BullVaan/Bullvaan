@@ -9,16 +9,16 @@ export default function Trades() {
   const [todayDate, setTodayDate] = useState('');
   const [filterDate, setFilterDate] = useState('');
   const [showForm, setShowForm] = useState(false);
-  const [liveLtp, setLiveLtp] = useState({});       // { "NIFTY 25400 CE": 128.5 }
-  const [sellingId, setSellingId] = useState(null);  // trade id currently being sold
+  const [liveLtp, setLiveLtp] = useState({});
+  const [sellingId, setSellingId] = useState(null);
   const wsRef = useRef(null);
+
+  // Bulls Approach state
+  const [pmTrades, setPmTrades] = useState([]);
+  const [pmTotalPnl, setPmTotalPnl] = useState(0);
+
   const [form, setForm] = useState({
-    name: '',
-    lot: 1,
-    buy_price: '',
-    sell_price: '',
-    buy_time: '',
-    sell_time: ''
+    name: '', lot: 1, buy_price: '', sell_price: '', buy_time: '', sell_time: ''
   });
 
   const fetchTrades = async (date) => {
@@ -35,8 +35,18 @@ export default function Trades() {
     }
   };
 
-  // Fetch live LTP for open trades — NOT USED, kept for fallback
-  // Real-time LTP comes via WebSocket below
+  const fetchPmTrades = async (date) => {
+    try {
+      // No date = show all historical premarket trades; date = filter to that day
+      const url = date ? `${API}/premarket-trades?date=${date}` : `${API}/premarket-trades`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setPmTrades(data.trades || []);
+      setPmTotalPnl(data.total_pnl || 0);
+    } catch {
+      console.error('Failed to fetch premarket trades');
+    }
+  };
 
   // Sell an open trade at the current live price
   const sellTrade = async (trade) => {
@@ -61,6 +71,13 @@ export default function Trades() {
 
   useEffect(() => {
     fetchTrades(filterDate || undefined);
+    fetchPmTrades(filterDate || undefined);
+  }, [filterDate]);
+
+  // Auto-refresh pm trades every 30s to pick up new open/closed records
+  useEffect(() => {
+    const id = setInterval(() => fetchPmTrades(filterDate || undefined), 30000);
+    return () => clearInterval(id);
   }, [filterDate]);
 
   // WebSocket: real-time LTP for open trades
@@ -209,6 +226,7 @@ export default function Trades() {
       </div>
 
       {/* ADD TRADE BUTTON */}
+      <div style={{ fontSize: 11, color: '#64748b', letterSpacing: 1, marginBottom: 10 }}>ADAPTIVE APPROACH</div>
       <div style={{ marginBottom: 15, display: 'flex', justifyContent: 'flex-end' }}>
         <button
           onClick={() => setShowForm(!showForm)}
@@ -377,6 +395,107 @@ export default function Trades() {
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* ── BULLS APPROACH TABLE ─────────────────────────────────── */}
+      <div style={{ marginTop: 32 }}>
+        <div style={{
+          background: '#020617',
+          border: '2px solid #334155',
+          borderRadius: 12,
+          padding: '16px 24px',
+          marginBottom: 14,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <div>
+            <div style={{ fontSize: 11, color: '#64748b', letterSpacing: 1 }}>BULLS APPROACH</div>
+            <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+              {filterDate ? filterDate : 'All trades'} · {pmTrades.length} trade{pmTrades.length !== 1 ? 's' : ''}
+            </div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 11, color: '#64748b', letterSpacing: 1 }}>P&L</div>
+            <div style={{
+              fontSize: 26, fontWeight: 800, fontFamily: 'monospace',
+              color: pmTotalPnl > 0 ? '#22c55e' : pmTotalPnl < 0 ? '#ef4444' : '#94a3b8'
+            }}>
+              {pmTotalPnl > 0 ? '+' : ''}₹{pmTotalPnl.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ background: '#020617', border: '1px solid #334155', borderRadius: 10, overflow: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#0f172a' }}>
+                {['Date', 'Symbol', 'Direction', 'Lots', 'Qty', 'Buy Price', 'Exit Price', 'Buy Time', 'Exit Time', 'Exit Reason', 'P&L', 'Mode'].map((h, i) => (
+                  <th key={i} style={{
+                    padding: '12px 14px', fontSize: 11, color: '#64748b', fontWeight: 600,
+                    letterSpacing: 1, textAlign: i <= 2 ? 'left' : 'center', borderBottom: '1px solid #1e293b'
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pmTrades.length === 0 ? (
+                <tr>
+                  <td colSpan={12} style={{ textAlign: 'center', color: '#475569', padding: 32, fontSize: 13 }}>
+                    No Bulls Approach trades for this date.
+                  </td>
+                </tr>
+              ) : (
+                pmTrades.map((t, i) => {
+                  const isOpen   = t.status === 'open';
+                  const pnl      = t.pnl || 0;
+                  const ltp      = liveLtp[t.tradingsymbol];
+                  const livePnl  = isOpen && ltp && t.buy_price ? (ltp - t.buy_price) * t.quantity : null;
+                  const displayPnl    = isOpen ? livePnl : pnl;
+                  const pnlColor      = displayPnl > 0 ? '#22c55e' : displayPnl < 0 ? '#ef4444' : '#94a3b8';
+                  const reasonColor   = t.exit_reason === 'TARGET' ? '#22c55e' : t.exit_reason === 'SL' ? '#ef4444' : '#f59e0b';
+                  const dirColor      = t.direction === 'BULLISH' ? '#22c55e' : '#ef4444';
+                  return (
+                    <tr key={i} style={{ borderBottom: '1px solid #1e293b' }}>
+                      <td style={{ padding: '10px 14px', fontSize: 12, color: '#94a3b8' }}>{t.date}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600, fontFamily: 'monospace' }}>{t.tradingsymbol}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: dirColor }}>{t.direction}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 13, textAlign: 'center' }}>{t.lots}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 13, textAlign: 'center' }}>{t.quantity}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 13, textAlign: 'center', fontFamily: 'monospace' }}>₹{Number(t.buy_price).toFixed(2)}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 13, textAlign: 'center', fontFamily: 'monospace' }}>
+                        {isOpen ? (
+                          ltp
+                            ? <span style={{ color: ltp >= t.buy_price ? '#22c55e' : '#ef4444', fontWeight: 600 }}>₹{Number(ltp).toFixed(2)}</span>
+                            : <span style={{ color: '#f59e0b', fontSize: 11 }}>OPEN</span>
+                        ) : `₹${Number(t.exit_price).toFixed(2)}`}
+                      </td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, textAlign: 'center', color: '#94a3b8' }}>{t.buy_time}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, textAlign: 'center', color: '#94a3b8' }}>{isOpen ? '—' : t.exit_time}</td>
+                      <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                        {isOpen ? (
+                          <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', background: '#f59e0b18', padding: '2px 8px', borderRadius: 4 }}>ACTIVE</span>
+                        ) : (
+                          <span style={{ fontSize: 11, fontWeight: 700, color: reasonColor, background: `${reasonColor}18`, padding: '2px 8px', borderRadius: 4 }}>{t.exit_reason}</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '10px 14px', fontSize: 13, textAlign: 'center', fontWeight: 700, color: pnlColor, fontFamily: 'monospace' }}>
+                        {displayPnl !== null
+                          ? `${displayPnl > 0 ? '+' : ''}₹${displayPnl.toFixed(2)}`
+                          : '—'}
+                      </td>
+                      <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                        <span style={{ fontSize: 10, color: '#64748b', background: '#1e293b', padding: '2px 6px', borderRadius: 3 }}>
+                          {t.mode || 'paper'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
